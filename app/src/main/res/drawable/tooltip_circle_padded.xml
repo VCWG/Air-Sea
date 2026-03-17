@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Draws the 22dp circle centered within a 42dp-tall view (10dp inset top and bottom) -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:top="10dp"
+        android:bottom="10dp">
+        <shape android:shape="oval">
+            <solid android:color="#AAAAAA" />
+        </shape>
+    </item>
+</layer-list>

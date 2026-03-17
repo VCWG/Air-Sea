@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Air+Sea</string>
+    <string name="app_desc">Air+Sea plugin for ATAK — real-time AIS ship and ADS-B aircraft positions as CoT markers</string>
+    <string name="start_sync">START SYNC</string>
+    <string name="stop_sync">STOP SYNC</string>
+</resources>
