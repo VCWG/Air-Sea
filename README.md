@@ -16,11 +16,11 @@ https://github.com/user-attachments/assets/e23ff31c-7f9e-4da3-b708-9757700f6cca
 
 ## Setup
 ### Maritime Tracking APIs
-- This plugin uses ![aisstream.io](https://aisstream.io/) as the ship data source.
+- This plugin uses [aisstream.io](https://aisstream.io/) as the ship data source.
 - This data source is free, but users must register on aisstream.io and generate an API key to input into the plugin.
 ### Air Traffic APIs
-- ![adsb.fi](https://adsb.fi/), ![airplanes.live](https://airplanes.live/), and ![adsb.lol](https://adsb.lol/) are supported without any API key provided.
-- ![OpenSky](https://opensky-network.org/) is supported with an optional API key to increase request limits.
+- [adsb.fi](https://adsb.fi/), [airplanes.live](https://airplanes.live/), and [adsb.lol](https://adsb.lol/) are supported without any API key provided.
+- [OpenSky](https://opensky-network.org/) is supported with an optional API key to increase request limits.
 ## Installation
 
 - Install ATAK-CIV version matching the version number supported by Air+Sea build
