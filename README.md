@@ -2,8 +2,7 @@
 
 An open source ATAK-CIV plugin that displays real-time ship and aircraft positions from AIS and ADS-B data sources as CoT markers.
 
-https://github.com/user-attachments/assets/e729e66b-e13e-40ac-95d7-043d605674a0
-
+https://github.com/user-attachments/assets/e23ff31c-7f9e-4da3-b708-9757700f6cca
 ## Features
 
 - Converts real-time ship and aircraft position information from AIS and ADS-B to CoT standard markers
