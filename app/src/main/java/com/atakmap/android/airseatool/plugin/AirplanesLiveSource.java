@@ -33,7 +33,7 @@ public class AirplanesLiveSource extends AbstractReadsbSource {
      * /v2/lat/{lat}/lon/{lon}/dist/{dist}, so we override fetch directly.
      */
     @Override
-    public void fetch(String apiKey,
+    public void fetch(String cred1, String cred2,
                       double minLat, double maxLat,
                       double minLon, double maxLon,
                       Callback callback) {

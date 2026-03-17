@@ -11,7 +11,7 @@ public interface AdsbSource {
     String getName();
     boolean requiresApiKey();
 
-    void fetch(String apiKey,
+    void fetch(String cred1, String cred2,
                double minLat, double maxLat,
                double minLon, double maxLon,
                Callback callback);

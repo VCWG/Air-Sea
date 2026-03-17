@@ -35,7 +35,7 @@ public class AdsbStreamClient {
         this.listener = listener;
     }
 
-    public void start(final String apiKey,
+    public void start(final String cred1, final String cred2,
                       final double minLat, final double maxLat,
                       final double minLon, final double maxLon,
                       final int intervalSeconds) {
@@ -46,7 +46,7 @@ public class AdsbStreamClient {
             listener.onConnected(source.getName());
 
             while (running) {
-                source.fetch(apiKey, minLat, maxLat, minLon, maxLon,
+                source.fetch(cred1, cred2, minLat, maxLat, minLon, maxLon,
                         new AdsbSource.Callback() {
                             @Override
                             public void onResult(List<Aircraft> aircraft) {

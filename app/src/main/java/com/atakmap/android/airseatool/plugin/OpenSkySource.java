@@ -10,14 +10,23 @@ import com.atakmap.coremap.log.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * ADS-B data source: OpenSky Network (https://opensky-network.org)
- * Free anonymous access (400 credits/day). Optional API key used as Bearer token
- * for authenticated access (4,000 credits/day). Uses bounding-box REST endpoint.
- * Returns state vectors; altitude in meters, speed in m/s.
+ * Anonymous access: 400 credits/day, 10-second resolution.
+ * Authenticated access: 4,000 credits/day, 5-second resolution.
+ *   Authentication uses OAuth2 Client Credentials flow — obtain a
+ *   client_id and client_secret from your OpenSky account page.
+ * Uses bounding-box REST endpoint; returns state vectors (altitude
+ * in metres, speed in m/s — converted to feet/knots on parse).
  *
  * State vector array indices:
  *  0  icao24      1  callsign    2  origin_country
@@ -30,8 +39,16 @@ import java.util.List;
 public class OpenSkySource implements AdsbSource {
 
     private static final String TAG = "OpenSkySource";
-    private static final String BASE =
+
+    private static final String STATES_URL =
             "https://opensky-network.org/api/states/all";
+    private static final String TOKEN_URL =
+            "https://auth.opensky-network.org/auth/realms/opensky-network"
+            + "/protocol/openid-connect/token";
+
+    /** Cached bearer token and its expiry (epoch ms). */
+    private String cachedToken = null;
+    private long tokenExpiryMs = 0L;
 
     @Override
     public String getName() {
@@ -44,23 +61,84 @@ public class OpenSkySource implements AdsbSource {
     }
 
     @Override
-    public void fetch(String apiKey,
+    public void fetch(String clientId, String clientSecret,
                       double minLat, double maxLat,
                       double minLon, double maxLon,
                       Callback callback) {
-        String urlStr = BASE
+        String urlStr = STATES_URL
                 + "?lamin=" + minLat + "&lomin=" + minLon
                 + "&lamax=" + maxLat + "&lomax=" + maxLon;
         Log.d(TAG, "fetch: " + urlStr);
 
         try {
-            String response = AbstractReadsbSource.httpGet(urlStr,
-                    (apiKey != null && !apiKey.isEmpty()) ? apiKey : null);
+            String bearer = null;
+            boolean hasCredentials = clientId != null && !clientId.isEmpty()
+                    && clientSecret != null && !clientSecret.isEmpty();
+            if (hasCredentials) {
+                bearer = acquireToken(clientId, clientSecret);
+            }
+            String response = AbstractReadsbSource.httpGet(urlStr, bearer);
             callback.onResult(parseStateVectors(response));
         } catch (Exception e) {
             Log.e(TAG, "fetch error", e);
             callback.onError(e.getMessage() != null ? e.getMessage() : "Fetch failed");
         }
+    }
+
+    /**
+     * Returns a valid bearer token, fetching a new one via the OAuth2
+     * client credentials flow if the cached token is absent or expiring soon.
+     */
+    private synchronized String acquireToken(String clientId, String clientSecret)
+            throws Exception {
+        // Refresh 60 s before actual expiry to avoid using a stale token
+        if (cachedToken != null
+                && System.currentTimeMillis() < tokenExpiryMs - 60_000L) {
+            return cachedToken;
+        }
+
+        Log.d(TAG, "Fetching new OAuth2 token for OpenSky");
+        String body = "grant_type=client_credentials"
+                + "&client_id=" + URLEncoder.encode(clientId, "UTF-8")
+                + "&client_secret=" + URLEncoder.encode(clientSecret, "UTF-8");
+
+        HttpURLConnection conn = (HttpURLConnection)
+                new URL(TOKEN_URL).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(10000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type",
+                "application/x-www-form-urlencoded");
+        conn.setRequestProperty("Accept", "application/json");
+
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body.getBytes("UTF-8"));
+        }
+
+        int code = conn.getResponseCode();
+        if (code != 200) {
+            conn.disconnect();
+            throw new Exception("OpenSky token request failed: HTTP " + code);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(conn.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+        }
+        conn.disconnect();
+
+        JSONObject resp = new JSONObject(sb.toString());
+        if (!resp.has("access_token")) {
+            throw new Exception("OpenSky token response missing access_token");
+        }
+        cachedToken = resp.getString("access_token");
+        int expiresIn = resp.optInt("expires_in", 1800);
+        tokenExpiryMs = System.currentTimeMillis() + expiresIn * 1000L;
+        Log.d(TAG, "OpenSky token acquired, expires in " + expiresIn + "s");
+        return cachedToken;
     }
 
     private static List<Aircraft> parseStateVectors(String json) throws Exception {
@@ -81,7 +159,7 @@ public class OpenSkySource implements AdsbSource {
             a.lon = s.getDouble(5);
             a.onGround = !s.isNull(8) && s.getBoolean(8);
 
-            // baro altitude: meters → feet
+            // baro altitude: metres → feet
             if (!s.isNull(7)) {
                 a.altitudeFt = s.getDouble(7) * 3.28084;
             }

@@ -59,10 +59,12 @@ public class AirSeaTool implements IPlugin,
     private static final String PREF_BROADCAST_ALL      = "broadcast_all";
 
     // Air prefs
-    private static final String PREF_AIR_ENABLED        = "air_enabled";
-    private static final String PREF_AIR_API_KEY        = "air_api_key_";  // + index suffix
-    private static final String PREF_AIR_SOURCE_INDEX   = "air_source_index";
-    private static final String PREF_AIR_BROADCAST_ALL  = "air_broadcast_all";
+    private static final String PREF_AIR_ENABLED           = "air_enabled";
+    private static final String PREF_AIR_API_KEY            = "air_api_key_";  // + index suffix (sources 0-2)
+    private static final String PREF_AIR_SOURCE_INDEX       = "air_source_index";
+    private static final String PREF_AIR_BROADCAST_ALL      = "air_broadcast_all";
+    private static final String PREF_OPENSKY_CLIENT_ID      = "opensky_client_id";
+    private static final String PREF_OPENSKY_CLIENT_SECRET  = "opensky_client_secret";
 
     private static final int[] FREQUENCY_VALUES = {5, 10, 30, 60, 300, 900};
     private static final String[] FREQUENCY_LABELS = {
@@ -90,7 +92,9 @@ public class AirSeaTool implements IPlugin,
     // Air
     private AdsbStreamClient adsbClient;
     private final AirMarkerManager airMarkerManager;
-    private final String[] airApiKeys = new String[]{"", "", "", ""};
+    private final String[] airApiKeys = new String[]{"", "", ""};  // sources 0-2 only
+    private String openSkyClientId = "";
+    private String openSkyClientSecret = "";
 
     private boolean syncing = false;
 
@@ -108,7 +112,11 @@ public class AirSeaTool implements IPlugin,
     // Air views
     private CheckBox airEnableCheckbox;
     private Spinner airDataSourceSpinner;
+    private View airApiKeySection;
     private TextView airApiKeyDisplay;
+    private View openSkySection;
+    private TextView openSkyClientIdDisplay;
+    private TextView openSkyClientSecretDisplay;
     private CheckBox airBroadcastCheckbox;
 
     // Shared views
@@ -171,7 +179,7 @@ public class AirSeaTool implements IPlugin,
             loadPreferences();
             updateSyncButton();
             updateApiKeyDisplay();
-            updateAirApiKeyDisplay();
+            updateAirCredentialFields();
 
             pane = new PaneBuilder(paneView)
                     .setMetaValue(Pane.RELATIVE_LOCATION, Pane.Location.Right)
@@ -242,7 +250,7 @@ public class AirSeaTool implements IPlugin,
             @Override
             public void onItemSelected(AdapterView<?> parent, View v,
                     int position, long id) {
-                updateAirApiKeyDisplay();
+                updateAirCredentialFields();
             }
             @Override
             public void onNothingSelected(AdapterView<?> parent) {}
@@ -251,8 +259,15 @@ public class AirSeaTool implements IPlugin,
         view.findViewById(R.id.air_data_source_tooltip)
                 .setOnClickListener(v -> showAirTooltip());
 
+        airApiKeySection = view.findViewById(R.id.air_apikey_section);
         airApiKeyDisplay = view.findViewById(R.id.air_api_key_display);
         airApiKeyDisplay.setOnClickListener(v -> showAirApiKeyDialog());
+
+        openSkySection = view.findViewById(R.id.opensky_credentials_section);
+        openSkyClientIdDisplay = view.findViewById(R.id.opensky_client_id_display);
+        openSkyClientIdDisplay.setOnClickListener(v -> showOpenSkyClientIdDialog());
+        openSkyClientSecretDisplay = view.findViewById(R.id.opensky_client_secret_display);
+        openSkyClientSecretDisplay.setOnClickListener(v -> showOpenSkyClientSecretDialog());
 
         airBroadcastCheckbox = view.findViewById(R.id.air_broadcast_all_checkbox);
         airBroadcastCheckbox.setOnClickListener(v ->
@@ -321,9 +336,11 @@ public class AirSeaTool implements IPlugin,
                 .setTitle("Air Traffic Data Source")
                 .setMessage("adsb.fi, airplanes.live, and adsb.lol provide "
                         + "free real-time ADS-B aircraft positions — no API "
-                        + "key required.\n\nOpenSky Network is free with "
-                        + "anonymous access (400 requests/day) and supports "
-                        + "an optional bearer token for higher limits.")
+                        + "key required.\n\nOpenSky Network provides free "
+                        + "anonymous access (400 credits/day). For 4,000 "
+                        + "credits/day, register at opensky-network.org, "
+                        + "open your Account page, and create an API client "
+                        + "to obtain a Client ID and Client Secret.")
                 .setPositiveButton("OK", null)
                 .show();
     }
@@ -342,10 +359,27 @@ public class AirSeaTool implements IPlugin,
         if (syncing) return;
         int idx = airDataSourceSpinner != null
                 ? airDataSourceSpinner.getSelectedItemPosition() : 0;
+        if (idx >= airApiKeys.length) return;
         String current = airApiKeys[idx] != null ? airApiKeys[idx] : "";
         showKeyDialog("Enter Air Traffic API Key", current, key -> {
             airApiKeys[idx] = key;
-            updateAirApiKeyDisplay();
+            updateAirCredentialFields();
+        });
+    }
+
+    private void showOpenSkyClientIdDialog() {
+        if (syncing) return;
+        showKeyDialog("Enter OpenSky Client ID", openSkyClientId, id -> {
+            openSkyClientId = id;
+            updateAirCredentialFields();
+        });
+    }
+
+    private void showOpenSkyClientSecretDialog() {
+        if (syncing) return;
+        showKeyDialog("Enter OpenSky Client Secret", openSkyClientSecret, secret -> {
+            openSkyClientSecret = secret;
+            updateAirCredentialFields();
         });
     }
 
@@ -387,14 +421,23 @@ public class AirSeaTool implements IPlugin,
         updateKeyDisplay(apiKeyDisplay, apiKey);
     }
 
-    private void updateAirApiKeyDisplay() {
+    private void updateAirCredentialFields() {
         int idx = airDataSourceSpinner != null
                 ? airDataSourceSpinner.getSelectedItemPosition() : 0;
-        String key = (airApiKeys[idx] != null) ? airApiKeys[idx] : "";
-        updateKeyDisplay(airApiKeyDisplay, key);
-        if (airApiKeyDisplay != null) {
-            // OpenSky (index 3) has an optional key; all others don't need one
-            airApiKeyDisplay.setHint(idx == 3 ? "Optional" : "Not required");
+        boolean isOpenSky = (idx == 3);
+
+        if (airApiKeySection != null)
+            airApiKeySection.setVisibility(isOpenSky ? View.GONE : View.VISIBLE);
+        if (openSkySection != null)
+            openSkySection.setVisibility(isOpenSky ? View.VISIBLE : View.GONE);
+
+        if (!isOpenSky) {
+            String key = (idx < airApiKeys.length && airApiKeys[idx] != null)
+                    ? airApiKeys[idx] : "";
+            updateKeyDisplay(airApiKeyDisplay, key);
+        } else {
+            updateKeyDisplay(openSkyClientIdDisplay, openSkyClientId);
+            updateKeyDisplay(openSkyClientSecretDisplay, openSkyClientSecret);
         }
     }
 
@@ -445,6 +488,8 @@ public class AirSeaTool implements IPlugin,
 
         for (int i = 0; i < airApiKeys.length; i++)
             airApiKeys[i] = prefs.getString(PREF_AIR_API_KEY + i, "");
+        openSkyClientId     = prefs.getString(PREF_OPENSKY_CLIENT_ID, "");
+        openSkyClientSecret = prefs.getString(PREF_OPENSKY_CLIENT_SECRET, "");
 
         int airSourceIndex = prefs.getInt(PREF_AIR_SOURCE_INDEX, 0);
         if (airSourceIndex >= 0 && airSourceIndex < AIR_SOURCE_LABELS.length)
@@ -484,6 +529,8 @@ public class AirSeaTool implements IPlugin,
         for (int i = 0; i < airApiKeys.length; i++)
             editor.putString(PREF_AIR_API_KEY + i,
                     airApiKeys[i] != null ? airApiKeys[i] : "");
+        editor.putString(PREF_OPENSKY_CLIENT_ID, openSkyClientId);
+        editor.putString(PREF_OPENSKY_CLIENT_SECRET, openSkyClientSecret);
         editor.apply();
     }
 
@@ -570,10 +617,18 @@ public class AirSeaTool implements IPlugin,
         AdsbSource source = createAirSource(sourceIdx);
         adsbClient = new AdsbStreamClient(source, this);
 
-        String key = airApiKeys[sourceIdx] != null ? airApiKeys[sourceIdx] : "";
+        String cred1, cred2;
+        if (sourceIdx == 3) {
+            // OpenSky: OAuth2 client credentials
+            cred1 = openSkyClientId;
+            cred2 = openSkyClientSecret;
+        } else {
+            cred1 = airApiKeys[sourceIdx] != null ? airApiKeys[sourceIdx] : "";
+            cred2 = "";
+        }
         int freqSeconds = FREQUENCY_VALUES[
                 frequencySpinner.getSelectedItemPosition()];
-        adsbClient.start(key,
+        adsbClient.start(cred1, cred2,
                 lastBoundingBox[0][0], lastBoundingBox[1][0],
                 lastBoundingBox[0][1], lastBoundingBox[1][1],
                 freqSeconds);
@@ -605,6 +660,8 @@ public class AirSeaTool implements IPlugin,
         if (apiKeyDisplay != null) apiKeyDisplay.setEnabled(enabled);
         if (airDataSourceSpinner != null) airDataSourceSpinner.setEnabled(enabled);
         if (airApiKeyDisplay != null) airApiKeyDisplay.setEnabled(enabled);
+        if (openSkyClientIdDisplay != null) openSkyClientIdDisplay.setEnabled(enabled);
+        if (openSkyClientSecretDisplay != null) openSkyClientSecretDisplay.setEnabled(enabled);
         if (minLatInput != null) minLatInput.setEnabled(enabled);
         if (maxLatInput != null) maxLatInput.setEnabled(enabled);
         if (minLonInput != null) minLonInput.setEnabled(enabled);

@@ -34,7 +34,7 @@ abstract class AbstractReadsbSource implements AdsbSource {
     }
 
     @Override
-    public void fetch(String apiKey,
+    public void fetch(String cred1, String cred2,
                       double minLat, double maxLat,
                       double minLon, double maxLon,
                       Callback callback) {
