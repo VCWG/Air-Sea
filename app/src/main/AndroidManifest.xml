@@ -3,6 +3,12 @@
     tools:ignore="GoogleAppIndexingWarning">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <!-- Android 11+ package visibility: allow interaction with RTL-SDR Driver -->
+    <queries>
+        <package android:name="marto.rtl_tcp_andro" />
+    </queries>
 
     <application
         android:allowBackup="false"

@@ -17,6 +17,7 @@ import com.atakmap.coremap.log.Log;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 import com.atakmap.coremap.maps.time.CoordinatedTime;
 
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,13 +27,14 @@ public class AirMarkerManager {
     private static final String UID_PREFIX = "ADSB-";
     private static final String COT_TYPE = "a-n-A";
     private static final String GROUP_NAME = "ADS-B Aircraft";
-    private static final long STALE_OFFSET_MS = 5 * 60 * 1000L;
+    private static final long STALE_OFFSET_MS = 60 * 1000L;
 
     private final Map<String, Long> lastUpdateTimes = new ConcurrentHashMap<>();
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
     private MapGroup airGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
+    private long nextEvictMs = 0;
 
     public AirMarkerManager(int updateFrequencySeconds) {
         this.updateFrequencyMs = updateFrequencySeconds * 1000L;
@@ -63,11 +65,21 @@ public class AirMarkerManager {
 
     public void updateAircraft(Aircraft a) {
         if (a.icao24 == null || a.icao24.isEmpty()) return;
+        // Skip frames with no position decoded yet (lat/lon both 0 = no CPR fix)
+        if (a.lat == 0.0 && a.lon == 0.0) return;
 
         long now = System.currentTimeMillis();
+
+        // Evict markers not updated within STALE_OFFSET_MS — run every 60 s
+        if (now >= nextEvictMs) {
+            nextEvictMs = now + 60_000L;
+            evictStale(now);
+        }
         Long lastUpdate = lastUpdateTimes.get(a.icao24);
-        if (lastUpdate != null && (now - lastUpdate) < updateFrequencyMs) return;
         lastUpdateTimes.put(a.icao24, now);
+        if (updateFrequencyMs > 0
+                && lastUpdate != null
+                && (now - lastUpdate) < updateFrequencyMs) return;
 
         String uid = UID_PREFIX + a.icao24;
         MapGroup group = getOrCreateGroup();
@@ -146,8 +158,12 @@ public class AirMarkerManager {
             sb.append("\nAlt: ").append((int) a.altitudeFt).append(" ft");
         if (a.groundSpeedKnots > 0)
             sb.append("\nSpeed: ").append((int) a.groundSpeedKnots).append(" kts");
+        if (a.verticalRateFpm != 0)
+            sb.append("\nAscent: ").append((int) a.verticalRateFpm).append(" fpm");
         if (!a.squawk.isEmpty())
             sb.append("\nSquawk: ").append(a.squawk);
+        if (!a.category.isEmpty())
+            sb.append("\nCategory: ").append(a.category);
         if (a.onGround)
             sb.append("\n[On Ground]");
         return sb.toString();
@@ -214,6 +230,20 @@ public class AirMarkerManager {
                         stub, m.getMetaString("remarks", ""));
             } catch (Exception e) {
                 Log.e(TAG, "Error broadcasting existing aircraft", e);
+            }
+        }
+    }
+
+    private void evictStale(long now) {
+        MapGroup group = airGroup;
+        Iterator<Map.Entry<String, Long>> it = lastUpdateTimes.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, Long> entry = it.next();
+            if (now - entry.getValue() > STALE_OFFSET_MS) {
+                String uid = UID_PREFIX + entry.getKey();
+                Marker m = markers.remove(uid);
+                if (m != null && group != null) group.removeItem(m);
+                it.remove();
             }
         }
     }

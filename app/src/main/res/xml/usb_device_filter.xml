@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  USB device filter for RTL-SDR dongles using the RTL2832U chipset.
+  Vendor 0x0BDA (Realtek) = 3034 decimal.
+-->
+<resources>
+    <usb-device vendor-id="3034" product-id="10290" /> <!-- 0x0BDA:0x2832 -->
+    <usb-device vendor-id="3034" product-id="10295" /> <!-- 0x0BDA:0x2837 -->
+    <usb-device vendor-id="3034" product-id="10296" /> <!-- 0x0BDA:0x2838 -->
+    <usb-device vendor-id="3034" product-id="10297" /> <!-- 0x0BDA:0x2839 -->
+    <usb-device vendor-id="3034" product-id="10298" /> <!-- 0x0BDA:0x283A -->
+</resources>

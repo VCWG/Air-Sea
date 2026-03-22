@@ -17,4 +17,6 @@ public class Aircraft {
     public double trackDeg = 0;
     public String squawk = "";
     public boolean onGround = false;
+    public double verticalRateFpm = 0;
+    public String category = "";
 }

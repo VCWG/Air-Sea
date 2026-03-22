@@ -7,8 +7,10 @@ package com.atakmap.android.airseatool.plugin;
 
 import android.app.AlertDialog;
 import android.content.Context;
-import android.graphics.Color;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
+import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -28,6 +30,8 @@ import android.view.LayoutInflater;
 
 import com.atak.plugins.impl.PluginContextProvider;
 import com.atakmap.android.maps.MapView;
+import com.atakmap.android.maps.Marker;
+import com.atakmap.coremap.maps.coords.GeoPoint;
 import com.atakmap.coremap.log.Log;
 
 import gov.tak.api.plugin.IPlugin;
@@ -65,16 +69,20 @@ public class AirSeaTool implements IPlugin,
     private static final String PREF_AIR_BROADCAST_ALL      = "air_broadcast_all";
     private static final String PREF_OPENSKY_CLIENT_ID      = "opensky_client_id";
     private static final String PREF_OPENSKY_CLIENT_SECRET  = "opensky_client_secret";
+    private static final String PREF_RTL_TCP_PORT           = "rtl_tcp_port";
 
-    private static final int[] FREQUENCY_VALUES = {5, 10, 30, 60, 300, 900};
+    private static final int[] FREQUENCY_VALUES = {1, 5, 10, 30, 60, 300, 900};
     private static final String[] FREQUENCY_LABELS = {
-            "5 seconds", "10 seconds", "30 seconds", "60 seconds",
-            "5 minutes", "15 minutes"
+            "1 second", "5 seconds", "10 seconds", "30 seconds",
+            "60 seconds", "5 minutes", "15 minutes"
     };
-    private static final int DEFAULT_FREQUENCY_INDEX = 2; // 30 seconds
+    private static final int DEFAULT_FREQUENCY_INDEX = 3; // 30 seconds
 
+    // Index 0 = RTL-SDR; 1-4 = network sources (air spinner only)
+    private static final String[] MARITIME_SOURCE_LABELS =
+            {"aisstream.io"};
     private static final String[] AIR_SOURCE_LABELS =
-            {"adsb.fi", "airplanes.live", "adsb.lol", "OpenSky"};
+            {"USB: RTL-SDR", "adsb.fi", "airplanes.live", "adsb.lol", "OpenSky"};
 
     private final android.content.Context pluginContext;
     private final IHostUIService uiService;
@@ -91,10 +99,14 @@ public class AirSeaTool implements IPlugin,
 
     // Air
     private AdsbStreamClient adsbClient;
+    private RtlSdrAdsbClient rtlAdsbClient;
     private final AirMarkerManager airMarkerManager;
-    private final String[] airApiKeys = new String[]{"", "", ""};  // sources 0-2 only
+    private final String[] airApiKeys = new String[]{"", "", ""};  // network sources 1-3
     private String openSkyClientId = "";
     private String openSkyClientSecret = "";
+
+    // Maritime RTL-SDR client
+    private RtlSdrAisClient rtlAisClient;
 
     private boolean syncing = false;
 
@@ -118,6 +130,14 @@ public class AirSeaTool implements IPlugin,
     private TextView openSkyClientIdDisplay;
     private TextView openSkyClientSecretDisplay;
     private CheckBox airBroadcastCheckbox;
+
+    // Maritime views (RTL-SDR hides the API key section)
+    private View maritimeApiKeySection;
+
+    // RTL-SDR port section (shown when either spinner is on RTL-SDR)
+    private View     rtlTcpSection;
+    private EditText rtlTcpPortInput;
+    private static final String RTL_TCP_HOST = "127.0.0.1";
 
     // Shared views
     private EditText minLatInput, maxLatInput, minLonInput, maxLonInput;
@@ -179,6 +199,7 @@ public class AirSeaTool implements IPlugin,
             loadPreferences();
             updateSyncButton();
             updateApiKeyDisplay();
+            updateMaritimeApiKeySection();
             updateAirCredentialFields();
 
             pane = new PaneBuilder(paneView)
@@ -211,14 +232,21 @@ public class AirSeaTool implements IPlugin,
 
         dataSourceSpinner = view.findViewById(R.id.data_source_spinner);
         ArrayAdapter<String> dsAdapter = new ArrayAdapter<>(pluginContext,
-                R.layout.spinner_item_black,
-                new String[]{"aisstream.io"});
+                R.layout.spinner_item_black, MARITIME_SOURCE_LABELS);
         dsAdapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
         dataSourceSpinner.setAdapter(dsAdapter);
+        dataSourceSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
+                updateMaritimeApiKeySection();
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
 
         view.findViewById(R.id.data_source_tooltip)
                 .setOnClickListener(v -> showMaritimeTooltip());
 
+        maritimeApiKeySection = view.findViewById(R.id.maritime_apikey_section);
         apiKeyDisplay = view.findViewById(R.id.api_key_display);
         apiKeyDisplay.setOnClickListener(v -> showApiKeyDialog());
 
@@ -273,6 +301,13 @@ public class AirSeaTool implements IPlugin,
         airBroadcastCheckbox.setOnClickListener(v ->
                 airMarkerManager.setBroadcastAll(airBroadcastCheckbox.isChecked()));
 
+        // RTL-SDR port
+        rtlTcpSection   = view.findViewById(R.id.rtl_tcp_section);
+        rtlTcpPortInput = view.findViewById(R.id.rtl_tcp_port_input);
+        view.findViewById(R.id.rtl_tcp_auto_btn).setOnClickListener(v -> launchRtlSdrDriver());
+        view.findViewById(R.id.rtl_port_tooltip)
+                .setOnClickListener(v -> showRtlPortTooltip());
+
         // Shared
         minLatInput = view.findViewById(R.id.min_lat_input);
         maxLatInput = view.findViewById(R.id.max_lat_input);
@@ -322,9 +357,9 @@ public class AirSeaTool implements IPlugin,
         if (mv == null) return;
         new AlertDialog.Builder(mv.getContext())
                 .setTitle("Maritime Data Source")
-                .setMessage("aisstream.io provides real-time AIS vessel "
-                        + "position data. A free API key "
-                        + "is required — register at aisstream.io")
+                .setMessage("aisstream.io provides real-time AIS vessel position "
+                        + "data over the internet. A free API key is required "
+                        + "— register at aisstream.io")
                 .setPositiveButton("OK", null)
                 .show();
     }
@@ -334,13 +369,28 @@ public class AirSeaTool implements IPlugin,
         if (mv == null) return;
         new AlertDialog.Builder(mv.getContext())
                 .setTitle("Air Traffic Data Source")
-                .setMessage("adsb.fi, airplanes.live, and adsb.lol provide "
+                .setMessage("USB: RTL-SDR requires a connected receiver and "
+                        + "antenna. User must install the \"RTL-SDR Driver\" app "
+                        + "(free, Play Store) from Signalware. Disable battery "
+                        + "optimization for the driver app.\n\n"
+                        + "adsb.fi, airplanes.live, and adsb.lol provide "
                         + "free real-time ADS-B aircraft positions — no API "
-                        + "key required.\n\nOpenSky Network provides free "
-                        + "anonymous access (400 credits/day). For 4,000 "
-                        + "credits/day, register at opensky-network.org, "
-                        + "open your Account page, and create an API client "
-                        + "to obtain a Client ID and Client Secret.")
+                        + "key required.\n\nOpenSky provides limited requests "
+                        + "without an account. For higher limits, register on "
+                        + "OpenSky to obtain API keys.")
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    private void showRtlPortTooltip() {
+        MapView mv = MapView.getMapView();
+        if (mv == null) return;
+        new AlertDialog.Builder(mv.getContext())
+                .setTitle("RTL-SDR Driver Port")
+                .setMessage("Enter the port as running in the RTL-SDR driver app, "
+                        + "or click start to launch the RTL-SDR service automatically. "
+                        + "The RTL-SDR driver must remain running with the configured "
+                        + "port for continuous function.")
                 .setPositiveButton("OK", null)
                 .show();
     }
@@ -359,10 +409,12 @@ public class AirSeaTool implements IPlugin,
         if (syncing) return;
         int idx = airDataSourceSpinner != null
                 ? airDataSourceSpinner.getSelectedItemPosition() : 0;
-        if (idx >= airApiKeys.length) return;
-        String current = airApiKeys[idx] != null ? airApiKeys[idx] : "";
+        // spinner 1-3 → airApiKeys 0-2
+        int keyIdx = idx - 1;
+        if (keyIdx < 0 || keyIdx >= airApiKeys.length) return;
+        String current = airApiKeys[keyIdx] != null ? airApiKeys[keyIdx] : "";
         showKeyDialog("Enter Air Traffic API Key", current, key -> {
-            airApiKeys[idx] = key;
+            airApiKeys[keyIdx] = key;
             updateAirCredentialFields();
         });
     }
@@ -421,24 +473,49 @@ public class AirSeaTool implements IPlugin,
         updateKeyDisplay(apiKeyDisplay, apiKey);
     }
 
+    /** Show/hide the maritime API key section based on spinner selection. */
+    private void updateMaritimeApiKeySection() {
+        if (maritimeApiKeySection != null)
+            maritimeApiKeySection.setVisibility(View.VISIBLE);
+        updateRtlTcpSection();
+    }
+
     private void updateAirCredentialFields() {
         int idx = airDataSourceSpinner != null
                 ? airDataSourceSpinner.getSelectedItemPosition() : 0;
-        boolean isOpenSky = (idx == 3);
+        // idx 0 = RTL-SDR, idx 4 = OpenSky
+        boolean isRtlSdr  = (idx == 0);
+        boolean isOpenSky = (idx == 4);
 
         if (airApiKeySection != null)
-            airApiKeySection.setVisibility(isOpenSky ? View.GONE : View.VISIBLE);
+            airApiKeySection.setVisibility(
+                    (isRtlSdr || isOpenSky) ? View.GONE : View.VISIBLE);
         if (openSkySection != null)
             openSkySection.setVisibility(isOpenSky ? View.VISIBLE : View.GONE);
 
-        if (!isOpenSky) {
-            String key = (idx < airApiKeys.length && airApiKeys[idx] != null)
-                    ? airApiKeys[idx] : "";
+        if (!isRtlSdr && !isOpenSky && idx >= 1 && idx <= 3) {
+            int keyIdx = idx - 1;  // airApiKeys[0..2] for spinner positions 1..3
+            String key = (airApiKeys[keyIdx] != null) ? airApiKeys[keyIdx] : "";
             updateKeyDisplay(airApiKeyDisplay, key);
-        } else {
+        } else if (isOpenSky) {
             updateKeyDisplay(openSkyClientIdDisplay, openSkyClientId);
             updateKeyDisplay(openSkyClientSecretDisplay, openSkyClientSecret);
         }
+        updateRtlTcpSection();
+    }
+
+    private void updateRtlTcpSection() {
+        if (rtlTcpSection == null) return;
+        boolean airRtl = airDataSourceSpinner != null
+                && airDataSourceSpinner.getSelectedItemPosition() == 0;
+        // Maritime RTL-SDR is currently disabled (only aisstream.io in the
+        // labels array), but check for it so the section reappears if it is
+        // re-added in the future.
+        boolean maritimeRtl = dataSourceSpinner != null
+                && MARITIME_SOURCE_LABELS.length > 1
+                && dataSourceSpinner.getSelectedItemPosition() == 0
+                && "USB: RTL-SDR".equals(MARITIME_SOURCE_LABELS[0]);
+        rtlTcpSection.setVisibility((airRtl || maritimeRtl) ? View.VISIBLE : View.GONE);
     }
 
     private static void updateKeyDisplay(TextView view, String key) {
@@ -498,6 +575,10 @@ public class AirSeaTool implements IPlugin,
         boolean airBroadcast = prefs.getBoolean(PREF_AIR_BROADCAST_ALL, false);
         airBroadcastCheckbox.setChecked(airBroadcast);
         airMarkerManager.setBroadcastAll(airBroadcast);
+
+        int savedPort = prefs.getInt(PREF_RTL_TCP_PORT, RtlTcpClient.DEFAULT_PORT);
+        if (rtlTcpPortInput != null)
+            rtlTcpPortInput.setText(String.valueOf(savedPort));
     }
 
     private void savePreferences() {
@@ -531,7 +612,67 @@ public class AirSeaTool implements IPlugin,
                     airApiKeys[i] != null ? airApiKeys[i] : "");
         editor.putString(PREF_OPENSKY_CLIENT_ID, openSkyClientId);
         editor.putString(PREF_OPENSKY_CLIENT_SECRET, openSkyClientSecret);
+        editor.putInt(PREF_RTL_TCP_PORT, getRtlTcpPort());
         editor.apply();
+    }
+
+    private int getRtlTcpPort() {
+        if (rtlTcpPortInput == null) return RtlTcpClient.DEFAULT_PORT;
+        try {
+            int p = Integer.parseInt(rtlTcpPortInput.getText().toString().trim());
+            return (p > 0 && p <= 65535) ? p : RtlTcpClient.DEFAULT_PORT;
+        } catch (NumberFormatException e) {
+            return RtlTcpClient.DEFAULT_PORT;
+        }
+    }
+
+    /**
+     * AUTO button handler — launches the RTL-SDR Driver via its designed
+     * external-app API ({@code iqsrc://} URI scheme).
+     *
+     * The Driver's architecture is caller-driven: WE specify the port in the
+     * URI, so there is no need to scan or discover it afterward.  The flow:
+     *
+     *   1. Read the port from the UI field (default 1234).
+     *   2. Send an {@code iqsrc://} VIEW intent to {@code DeviceOpenActivity}
+     *      with {@code -p <port>}.  The Driver starts streaming on that port.
+     *   3. We already know the port — just save it.
+     */
+    private void launchRtlSdrDriver() {
+        MapView mv = MapView.getMapView();
+        if (mv == null) return;
+
+        int port = getRtlTcpPort();   // from field, or DEFAULT_PORT (1234)
+        // Ports below 1024 are privileged on Android — the Driver can't bind them.
+        if (port < 1024) port = RtlTcpClient.DEFAULT_PORT;
+
+        // Build the iqsrc:// URI.  The Driver parses -a, -p, -s, -f from it.
+        // Address MUST be 0.0.0.0 (all interfaces); 127.0.0.1 causes bind failure.
+        String uri = "iqsrc://-a 0.0.0.0 -p " + port + " -s 1024000 -f 100000000";
+
+        try {
+            Intent iqsrc = new Intent(Intent.ACTION_VIEW, Uri.parse(uri));
+            iqsrc.setClassName("marto.rtl_tcp_andro",
+                    "com.sdrtouch.rtlsdr.DeviceOpenActivity");
+            iqsrc.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            mv.getContext().startActivity(iqsrc);
+            Log.d(TAG, "RTL-SDR Driver launched via iqsrc:// on port " + port);
+
+            // Ensure the port field reflects what we told the Driver to use
+            if (rtlTcpPortInput != null) rtlTcpPortInput.setText(String.valueOf(port));
+            savePreferences();
+            showToast("RTL-SDR Driver starting on port " + port);
+        } catch (android.content.ActivityNotFoundException e) {
+            Log.w(TAG, "RTL-SDR Driver not installed: " + e.getMessage());
+            showToast("RTL-SDR Driver app not installed");
+        } catch (SecurityException e) {
+            Log.w(TAG, "SecurityException launching Driver: " + e.getMessage());
+            showToast("Cannot open RTL-SDR Driver: " + e.getMessage());
+        } catch (Exception e) {
+            Log.w(TAG, "Exception launching Driver (" + e.getClass().getSimpleName()
+                    + "): " + e.getMessage());
+            showToast("Cannot open RTL-SDR Driver: " + e.getClass().getSimpleName());
+        }
     }
 
     // ─── Sync control ──────────────────────────────────────────────────────
@@ -588,13 +729,13 @@ public class AirSeaTool implements IPlugin,
     }
 
     private void startMaritimeSync() {
-        if (aisClient != null) return;
+        if (aisClient != null || rtlAisClient != null) return;
 
+        // aisstream.io
         if (apiKey == null || apiKey.isEmpty()) {
             updateStatus("Maritime: API Key required.");
             return;
         }
-
         lastApiKey = apiKey;
         aisClient = new AisStreamClient(this);
         aisClient.connect(lastApiKey, lastBoundingBox);
@@ -606,28 +747,45 @@ public class AirSeaTool implements IPlugin,
             aisClient.disconnect();
             aisClient = null;
         }
+        if (rtlAisClient != null) {
+            rtlAisClient.disconnect();
+            rtlAisClient = null;
+        }
         shipMarkerManager.removeAllMarkers();
         updateStatus(null);
     }
 
     private void startAirSync() {
-        if (adsbClient != null) return;
+        if (adsbClient != null || rtlAdsbClient != null) return;
 
         int sourceIdx = airDataSourceSpinner.getSelectedItemPosition();
+
+        if (sourceIdx == 0) {
+            // RTL-SDR: bypass update frequency throttle — update on every CPR fix
+            airMarkerManager.setUpdateFrequency(0);
+            rtlAdsbClient = new RtlSdrAdsbClient(this, RTL_TCP_HOST, getRtlTcpPort());
+            rtlAdsbClient.start();
+            updateAirStatus("Air: Connecting to RTL-SDR Driver...");
+            return;
+        }
+
+        // Network source: spinner 1-4 → sources adsb.fi, airplanes.live, adsb.lol, OpenSky
         AdsbSource source = createAirSource(sourceIdx);
         adsbClient = new AdsbStreamClient(source, this);
 
         String cred1, cred2;
-        if (sourceIdx == 3) {
+        if (sourceIdx == 4) {
             // OpenSky: OAuth2 client credentials
             cred1 = openSkyClientId;
             cred2 = openSkyClientSecret;
         } else {
-            cred1 = airApiKeys[sourceIdx] != null ? airApiKeys[sourceIdx] : "";
+            // airApiKeys[0..2] for spinner positions 1..3
+            int keyIdx = sourceIdx - 1;
+            cred1 = (keyIdx >= 0 && keyIdx < airApiKeys.length && airApiKeys[keyIdx] != null)
+                    ? airApiKeys[keyIdx] : "";
             cred2 = "";
         }
-        int freqSeconds = FREQUENCY_VALUES[
-                frequencySpinner.getSelectedItemPosition()];
+        int freqSeconds = FREQUENCY_VALUES[frequencySpinner.getSelectedItemPosition()];
         adsbClient.start(cred1, cred2,
                 lastBoundingBox[0][0], lastBoundingBox[1][0],
                 lastBoundingBox[0][1], lastBoundingBox[1][1],
@@ -640,15 +798,23 @@ public class AirSeaTool implements IPlugin,
             adsbClient.stop();
             adsbClient = null;
         }
+        if (rtlAdsbClient != null) {
+            rtlAdsbClient.stop();
+            rtlAdsbClient = null;
+            // Restore configured update frequency
+            int freqSecs = FREQUENCY_VALUES[frequencySpinner.getSelectedItemPosition()];
+            airMarkerManager.setUpdateFrequency(freqSecs);
+        }
         airMarkerManager.removeAllMarkers();
         updateAirStatus(null);
     }
 
-    private AdsbSource createAirSource(int index) {
-        switch (index) {
-            case 1: return new AirplanesLiveSource();
-            case 2: return new AdsbLolSource();
-            case 3: return new OpenSkySource();
+    private AdsbSource createAirSource(int spinnerIndex) {
+        // spinnerIndex: 1=adsb.fi, 2=airplanes.live, 3=adsb.lol, 4=OpenSky
+        switch (spinnerIndex) {
+            case 2: return new AirplanesLiveSource();
+            case 3: return new AdsbLolSource();
+            case 4: return new OpenSkySource();
             default: return new AdsbFiSource();
         }
     }
@@ -779,11 +945,13 @@ public class AirSeaTool implements IPlugin,
 
     @Override
     public void onDisconnected() {
-        if (syncing && maritimeEnableCheckbox != null
+        if (syncing
+                && maritimeEnableCheckbox != null
                 && maritimeEnableCheckbox.isChecked()
                 && lastApiKey != null && lastBoundingBox != null) {
             updateStatus("Maritime: Reconnecting...");
             Log.d(TAG, "AIS auto-reconnecting...");
+            aisClient = null;
             mainHandler.postDelayed(() -> {
                 if (!syncing) return;
                 aisClient = new AisStreamClient(this);
@@ -799,8 +967,24 @@ public class AirSeaTool implements IPlugin,
         updateAirStatus("Air: Connected to " + sourceName);
     }
 
+    private static final double RTL_MAX_RANGE_M = 150_000.0; // 150 km
+
     @Override
     public void onAircraft(Aircraft aircraft) {
+        // Range cutoff: only for RTL-SDR, and only when we have a valid GPS fix.
+        // API sources handle their own geographic filtering via bounding box.
+        if (rtlAdsbClient != null) {
+            MapView mv = MapView.getMapView();
+            Marker self = (mv != null) ? mv.getSelfMarker() : null;
+            if (self != null) {
+                GeoPoint selfPt = self.getPoint();
+                if (selfPt.isValid() && selfPt.getLatitude() != 0.0
+                        && selfPt.getLongitude() != 0.0) {
+                    GeoPoint acPt = new GeoPoint(aircraft.lat, aircraft.lon);
+                    if (selfPt.distanceTo(acPt) > RTL_MAX_RANGE_M) return;
+                }
+            }
+        }
         airMarkerManager.updateAircraft(aircraft);
     }
 

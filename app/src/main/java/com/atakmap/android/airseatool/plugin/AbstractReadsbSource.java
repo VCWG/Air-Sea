@@ -91,6 +91,30 @@ abstract class AbstractReadsbSource implements AdsbSource {
         }
     }
 
+    /** Translate readsb category codes like "A2" to human-readable labels. */
+    private static String decodeCategoryCode(String code) {
+        if (code == null || code.length() != 2) return code;
+        switch (code) {
+            case "A1": return "Light";
+            case "A2": return "Small";
+            case "A3": return "Large";
+            case "A4": return "High Vortex Large";
+            case "A5": return "Heavy";
+            case "A6": return "High Performance";
+            case "A7": return "Rotorcraft";
+            case "B1": return "Glider/Sailplane";
+            case "B2": return "Lighter-than-Air";
+            case "B3": return "Parachutist/Skydiver";
+            case "B4": return "Ultralight/Hang-glider";
+            case "B6": return "UAV";
+            case "B7": return "Space Vehicle";
+            case "C1": return "Emergency Vehicle";
+            case "C2": return "Service Vehicle";
+            case "C3": return "Ground Obstruction";
+            default:   return code;
+        }
+    }
+
     static List<Aircraft> parseReadsb(String json) throws Exception {
         JSONObject root = new JSONObject(json);
         // readsb API format uses "aircraft"; tar1090 internal format uses "ac"
@@ -123,6 +147,8 @@ abstract class AbstractReadsbSource implements AdsbSource {
                 a.altitudeFt = 0;
                 a.onGround = "ground".equals(altObj);
             }
+            a.verticalRateFpm = obj.optDouble("baro_rate", 0);
+            a.category = decodeCategoryCode(obj.optString("category", "").trim());
             result.add(a);
         }
         return result;

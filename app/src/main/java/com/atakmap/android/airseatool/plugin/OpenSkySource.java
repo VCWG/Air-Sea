@@ -141,6 +141,48 @@ public class OpenSkySource implements AdsbSource {
         return cachedToken;
     }
 
+    /**
+     * OpenSky category field encodes ADS-B emitter category as a single int:
+     * high nibble = set (A=0xA0, B=0xB0, C=0xC0, D=0xD0), low nibble = sub-category.
+     */
+    private static String decodeOpenSkyCategory(int cat) {
+        if (cat == 0) return "";
+        int set = (cat >> 4) & 0xF;
+        int sub = cat & 0xF;
+        switch (set) {
+            case 0xA:
+                switch (sub) {
+                    case 1: return "Light";
+                    case 2: return "Small";
+                    case 3: return "Large";
+                    case 4: return "High Vortex Large";
+                    case 5: return "Heavy";
+                    case 6: return "High Performance";
+                    case 7: return "Rotorcraft";
+                    default: return "";
+                }
+            case 0xB:
+                switch (sub) {
+                    case 1: return "Glider/Sailplane";
+                    case 2: return "Lighter-than-Air";
+                    case 3: return "Parachutist/Skydiver";
+                    case 4: return "Ultralight/Hang-glider";
+                    case 6: return "UAV";
+                    case 7: return "Space Vehicle";
+                    default: return "";
+                }
+            case 0xC:
+                switch (sub) {
+                    case 1: return "Emergency Vehicle";
+                    case 2: return "Service Vehicle";
+                    case 3: return "Ground Obstruction";
+                    default: return "Surface";
+                }
+            default:
+                return "";
+        }
+    }
+
     private static List<Aircraft> parseStateVectors(String json) throws Exception {
         JSONObject root = new JSONObject(json);
         JSONArray states = root.optJSONArray("states");
@@ -171,6 +213,14 @@ public class OpenSkySource implements AdsbSource {
                 a.trackDeg = s.getDouble(10);
             }
             a.squawk = s.isNull(14) ? "" : s.optString(14, "").trim();
+            // vertical_rate: m/s → ft/min
+            if (!s.isNull(11)) {
+                a.verticalRateFpm = s.getDouble(11) * 196.85;
+            }
+            // category: integer emitter category
+            if (!s.isNull(17)) {
+                a.category = decodeOpenSkyCategory(s.optInt(17, 0));
+            }
             result.add(a);
         }
         return result;

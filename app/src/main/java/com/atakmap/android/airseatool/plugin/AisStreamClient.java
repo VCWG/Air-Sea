@@ -65,6 +65,9 @@ public class AisStreamClient {
 
         new Thread(() -> {
             try {
+                // Assign webSocket before connect() so disconnect() can interrupt
+                // an in-progress connection attempt (webSocket would otherwise be
+                // null until connect() returns, making disconnect() a no-op).
                 webSocket = new WebSocketFactory()
                         .setConnectionTimeout(10000)
                         .createSocket(WS_URL)
@@ -74,6 +77,7 @@ public class AisStreamClient {
                             @Override
                             public void onConnected(WebSocket ws,
                                     Map<String, List<String>> headers) {
+                                if (stopped) return;
                                 Log.d(TAG, "WebSocket connected");
                                 for (Map.Entry<String, List<String>> h
                                         : headers.entrySet()) {
@@ -158,8 +162,8 @@ public class AisStreamClient {
                                     WebSocketException cause) {
                                 Log.e(TAG, "Unexpected error", cause);
                             }
-                        })
-                        .connect();
+                        });
+                webSocket.connect();
             } catch (Exception e) {
                 Log.e(TAG, "WebSocket connect failed", e);
                 if (!stopped) {
