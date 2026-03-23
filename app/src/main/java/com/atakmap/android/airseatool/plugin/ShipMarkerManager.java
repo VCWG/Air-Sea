@@ -32,8 +32,8 @@ public class ShipMarkerManager {
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
     /** The CoT type we last programmatically set on each marker (uid → type). */
     private final Map<String, String> lastSetTypes = new ConcurrentHashMap<>();
-    /** User-overridden affiliation characters (uid → affiliation char, e.g. "h"). */
-    private final Map<String, String> userAffiliations = new ConcurrentHashMap<>();
+    /** User-overridden full CoT type (uid → complete type string). */
+    private final Map<String, String> userTypeOverrides = new ConcurrentHashMap<>();
     private MapGroup aisGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
@@ -135,12 +135,12 @@ public class ShipMarkerManager {
                     : (Marker.STYLE_ROTATE_HEADING_NOARROW_MASK
                             | Marker.STYLE_SMOOTH_ROTATION_MASK);
 
-            // Detect user affiliation change before computing effective type
+            // Detect user type change before computing effective type
             if (marker != null) {
-                detectUserAffiliation(uid, marker);
+                detectUserTypeChange(uid, marker);
             }
 
-            String cotType = applyUserAffiliation(COT_TYPE, uid);
+            String cotType = resolveEffectiveType(COT_TYPE, uid);
 
             if (marker == null) {
                 marker = new Marker(point, uid);
@@ -197,28 +197,26 @@ public class ShipMarkerManager {
     }
 
     /**
-     * Detect if the user changed the marker's affiliation via ATAK's UI.
+     * Detect if the user changed the marker's type via ATAK's UI.
+     * Stores the user's full type choice for future updates.
      */
-    private void detectUserAffiliation(String uid, Marker marker) {
+    private void detectUserTypeChange(String uid, Marker marker) {
         String currentType = marker.getType();
         String lastSet = lastSetTypes.get(uid);
         if (lastSet == null || currentType == null) return;
         if (currentType.equals(lastSet)) return;
-        if (currentType.length() >= 3 && currentType.charAt(0) == 'a'
-                && currentType.charAt(1) == '-') {
-            String aff = String.valueOf(currentType.charAt(2));
-            userAffiliations.put(uid, aff);
-            Log.d(TAG, uid + " user set affiliation: " + aff);
-        }
+        userTypeOverrides.put(uid, currentType);
+        Log.d(TAG, uid + " user set type: " + currentType);
     }
 
     /**
-     * Apply a user-overridden affiliation character to a CoT type.
+     * If the user has overridden the type, use their choice; otherwise
+     * use the default type.
      */
-    private String applyUserAffiliation(String baseType, String uid) {
-        String aff = userAffiliations.get(uid);
-        if (aff == null || baseType.length() < 3) return baseType;
-        return baseType.substring(0, 2) + aff + baseType.substring(3);
+    private String resolveEffectiveType(String defaultType, String uid) {
+        String userType = userTypeOverrides.get(uid);
+        if (userType != null) return userType;
+        return defaultType;
     }
 
     private static String getNavStatusText(int status) {
@@ -344,6 +342,12 @@ public class ShipMarkerManager {
     }
 
     public void removeAllMarkers() {
+        // Remove each marker individually — user-retyped markers may have
+        // been moved to a different MapGroup by ATAK
+        for (Marker m : markers.values()) {
+            MapGroup parent = m.getGroup();
+            if (parent != null) parent.removeItem(m);
+        }
         MapGroup group = aisGroup;
         if (group != null) {
             group.clearItems();
@@ -351,7 +355,7 @@ public class ShipMarkerManager {
         markers.clear();
         lastUpdateTimes.clear();
         lastSetTypes.clear();
-        userAffiliations.clear();
+        userTypeOverrides.clear();
         aisGroup = null;
     }
 }

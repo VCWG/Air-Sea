@@ -36,8 +36,8 @@ public class AirMarkerManager {
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
     /** The CoT type we last programmatically set on each marker (uid → type). */
     private final Map<String, String> lastSetTypes = new ConcurrentHashMap<>();
-    /** User-overridden affiliation characters (uid → affiliation char, e.g. "h"). */
-    private final Map<String, String> userAffiliations = new ConcurrentHashMap<>();
+    /** User-overridden full CoT type (uid → complete type string). */
+    private final Map<String, String> userTypeOverrides = new ConcurrentHashMap<>();
     private MapGroup airGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
@@ -113,13 +113,13 @@ public class AirMarkerManager {
             GeoPoint point = new GeoPoint(a.lat, a.lon, altM);
             Marker marker = markers.get(uid);
 
-            // Detect user affiliation change before computing the effective type
+            // Detect user type change before computing the effective type
             if (marker != null) {
-                detectUserAffiliation(uid, marker);
+                detectUserTypeChange(uid, marker);
             }
 
-            // Auto-category type, then apply any user affiliation override
-            String cotType = applyUserAffiliation(resolveCotType(a), uid);
+            // Use user override if set, otherwise auto-categorize
+            String cotType = resolveEffectiveType(resolveCotType(a), uid);
 
             if (marker == null) {
                 marker = createMarker(point, uid, cotType, style, displayName,
@@ -175,31 +175,28 @@ public class AirMarkerManager {
     }
 
     /**
-     * Detect if the user changed the marker's affiliation via ATAK's UI.
+     * Detect if the user changed the marker's type via ATAK's UI.
      * Compares the marker's current type to what we last set programmatically.
+     * Stores the user's full type choice for future updates.
      */
-    private void detectUserAffiliation(String uid, Marker marker) {
+    private void detectUserTypeChange(String uid, Marker marker) {
         String currentType = marker.getType();
         String lastSet = lastSetTypes.get(uid);
         if (lastSet == null || currentType == null) return;
         if (currentType.equals(lastSet)) return;
-        // Type was changed externally — extract the affiliation character
-        if (currentType.length() >= 3 && currentType.charAt(0) == 'a'
-                && currentType.charAt(1) == '-') {
-            String aff = String.valueOf(currentType.charAt(2));
-            userAffiliations.put(uid, aff);
-            Log.d(TAG, uid + " user set affiliation: " + aff);
-        }
+        // Type was changed externally — store the user's full type
+        userTypeOverrides.put(uid, currentType);
+        Log.d(TAG, uid + " user set type: " + currentType);
     }
 
     /**
-     * Apply a user-overridden affiliation character to an auto-category CoT type.
-     * e.g. auto="a-n-A-C-F" + user="h" → "a-h-A-C-F"
+     * If the user has overridden the type, use their choice; otherwise
+     * use the auto-categorized type.
      */
-    private String applyUserAffiliation(String autoType, String uid) {
-        String aff = userAffiliations.get(uid);
-        if (aff == null || autoType.length() < 3) return autoType;
-        return autoType.substring(0, 2) + aff + autoType.substring(3);
+    private String resolveEffectiveType(String autoType, String uid) {
+        String userType = userTypeOverrides.get(uid);
+        if (userType != null) return userType;
+        return autoType;
     }
 
     private static String resolveCotType(Aircraft a) {
@@ -326,21 +323,30 @@ public class AirMarkerManager {
             if (now - entry.getValue() > STALE_OFFSET_MS) {
                 String uid = UID_PREFIX + entry.getKey();
                 Marker m = markers.remove(uid);
-                if (m != null && group != null) group.removeItem(m);
+                if (m != null) {
+                    MapGroup parent = m.getGroup();
+                    if (parent != null) parent.removeItem(m);
+                }
                 lastSetTypes.remove(uid);
-                userAffiliations.remove(uid);
+                userTypeOverrides.remove(uid);
                 it.remove();
             }
         }
     }
 
     public void removeAllMarkers() {
+        // Remove each marker individually — user-retyped markers may have
+        // been moved to a different MapGroup by ATAK
+        for (Marker m : markers.values()) {
+            MapGroup parent = m.getGroup();
+            if (parent != null) parent.removeItem(m);
+        }
         MapGroup group = airGroup;
         if (group != null) group.clearItems();
         markers.clear();
         lastUpdateTimes.clear();
         lastSetTypes.clear();
-        userAffiliations.clear();
+        userTypeOverrides.clear();
         airGroup = null;
     }
 }
