@@ -25,7 +25,10 @@ public class AirMarkerManager {
 
     private static final String TAG = "AirMarkerManager";
     private static final String UID_PREFIX = "ADSB-";
-    private static final String COT_TYPE = "a-n-A";
+    private static final String COT_TYPE           = "a-n-A";
+    private static final String COT_TYPE_FIXED_WING = "a-n-A-C-F";
+    private static final String COT_TYPE_ROTARY     = "a-n-A-C-R";
+    private static final String COT_TYPE_LTA        = "a-n-A-C-L";
     private static final String GROUP_NAME = "ADS-B Aircraft";
     private static final long STALE_OFFSET_MS = 60 * 1000L;
 
@@ -87,6 +90,7 @@ public class AirMarkerManager {
 
         try {
             String displayName = resolveDisplayName(a);
+            String cotType = resolveCotType(a);
             String remarks = buildRemarks(a);
             double speedMps = a.groundSpeedKnots * 0.514444;
             // Use UNKNOWN altitude for on-ground aircraft so ATAK doesn't
@@ -108,7 +112,7 @@ public class AirMarkerManager {
 
             if (marker == null) {
                 marker = new Marker(point, uid);
-                marker.setType(COT_TYPE);
+                marker.setType(cotType);
                 marker.setStyle(style);
                 marker.setTitle(displayName);
                 marker.setMetaString("callsign", displayName);
@@ -123,19 +127,62 @@ public class AirMarkerManager {
                 group.addItem(marker);
                 markers.put(uid, marker);
             } else {
-                marker.setPoint(point);
-                marker.setStyle(style);
-                marker.setTitle(displayName);
-                marker.setMetaString("callsign", displayName);
-                marker.setTrack(a.trackDeg, speedMps);
-                marker.setMetaString("remarks", remarks);
-                if (!Double.isNaN(altM))
-                    marker.setMetaDouble("altitude", altM);
+                // If the CoT type changed, remove and recreate the marker
+                // so ATAK refreshes the icon
+                if (!cotType.equals(marker.getType())) {
+                    group.removeItem(marker);
+                    markers.remove(uid);
+                    marker = new Marker(point, uid);
+                    marker.setType(cotType);
+                    marker.setStyle(style);
+                    marker.setTitle(displayName);
+                    marker.setMetaString("callsign", displayName);
+                    marker.setMetaString("how", "m-g");
+                    marker.setTrack(a.trackDeg, speedMps);
+                    marker.setMetaString("remarks", remarks);
+                    if (!Double.isNaN(altM))
+                        marker.setMetaDouble("altitude", altM);
+                    marker.setMetaBoolean("readiness", true);
+                    marker.setMetaBoolean("archive", false);
+                    marker.setVisible(true);
+                    group.addItem(marker);
+                    markers.put(uid, marker);
+                } else {
+                    marker.setPoint(point);
+                    marker.setStyle(style);
+                    marker.setTitle(displayName);
+                    marker.setMetaString("callsign", displayName);
+                    marker.setTrack(a.trackDeg, speedMps);
+                    marker.setMetaString("remarks", remarks);
+                    if (!Double.isNaN(altM))
+                        marker.setMetaDouble("altitude", altM);
+                }
             }
 
-            if (broadcastAll) broadcastMarker(uid, displayName, a, remarks);
+            if (broadcastAll) broadcastMarker(uid, displayName, a, cotType, remarks);
         } catch (Exception e) {
             Log.e(TAG, "Error updating aircraft marker " + a.icao24, e);
+        }
+    }
+
+    private static String resolveCotType(Aircraft a) {
+        String cat = a.category;
+        if (cat == null || cat.isEmpty()) return COT_TYPE;
+        switch (cat) {
+            case "Light":              // A1
+            case "Small":              // A2
+            case "Large":              // A3
+            case "High Vortex Large":  // A4
+            case "Heavy":              // A5
+            case "High Performance":   // A6
+            case "Glider/Sailplane":   // B1
+                return COT_TYPE_FIXED_WING;
+            case "Rotorcraft":         // A7
+                return COT_TYPE_ROTARY;
+            case "Lighter-than-Air":   // B2
+                return COT_TYPE_LTA;
+            default:
+                return COT_TYPE;
         }
     }
 
@@ -170,11 +217,11 @@ public class AirMarkerManager {
     }
 
     private void broadcastMarker(String uid, String callsign,
-                                  Aircraft a, String remarks) {
+                                  Aircraft a, String cotType, String remarks) {
         try {
             CotEvent event = new CotEvent();
             event.setUID(uid);
-            event.setType(COT_TYPE);
+            event.setType(cotType);
             event.setHow("m-g");
 
             CoordinatedTime now = new CoordinatedTime();
@@ -227,7 +274,7 @@ public class AirMarkerManager {
                 stub.groundSpeedKnots = m.getTrackSpeed() / 0.514444;
                 broadcastMarker(entry.getKey(),
                         m.getMetaString("callsign", m.getTitle()),
-                        stub, m.getMetaString("remarks", ""));
+                        stub, m.getType(), m.getMetaString("remarks", ""));
             } catch (Exception e) {
                 Log.e(TAG, "Error broadcasting existing aircraft", e);
             }
