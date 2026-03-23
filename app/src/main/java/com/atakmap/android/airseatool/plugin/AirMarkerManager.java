@@ -29,6 +29,7 @@ public class AirMarkerManager {
     private static final String COT_TYPE_FIXED_WING = "a-n-A-C-F";
     private static final String COT_TYPE_ROTARY     = "a-n-A-C-H";
     private static final String COT_TYPE_LTA        = "a-n-A-C-L";
+    private static final String COT_TYPE_GROUND_VEH = "a-n-G-E-V-U";
     private static final String GROUP_NAME = "ADS-B Aircraft";
     private static final long STALE_OFFSET_MS = 60 * 1000L;
 
@@ -215,6 +216,9 @@ public class AirMarkerManager {
                 return COT_TYPE_ROTARY;
             case "Lighter-than-Air":   // B2
                 return COT_TYPE_LTA;
+            case "Emergency Vehicle":  // C1
+            case "Service Vehicle":    // C2
+                return COT_TYPE_GROUND_VEH;
             default:
                 return COT_TYPE;
         }
