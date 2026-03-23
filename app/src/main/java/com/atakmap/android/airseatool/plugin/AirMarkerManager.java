@@ -31,7 +31,7 @@ public class AirMarkerManager {
     private static final String COT_TYPE_LTA        = "a-n-A-C-L";
     private static final String COT_TYPE_GROUND_VEH = "a-n-G-E-V-U";
     private static final String GROUP_NAME = "ADS-B Aircraft";
-    public  static final long DEFAULT_staleOffsetMs = 60 * 1000L;
+    public  static final long DEFAULT_staleOffsetMs = 70 * 1000L;
     private volatile long staleOffsetMs = DEFAULT_staleOffsetMs;
 
     private volatile char affiliation = 'n';

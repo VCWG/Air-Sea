@@ -80,10 +80,9 @@ public class AirSeaTool implements IPlugin,
     private static final String PREF_OPENSKY_CLIENT_SECRET  = "opensky_client_secret";
     private static final String PREF_RTL_TCP_PORT           = "rtl_tcp_port";
 
-    private static final int[] FREQUENCY_VALUES = {1, 5, 10, 30, 60, 300, 900};
+    private static final int[] FREQUENCY_VALUES = {1, 5, 10, 30, 60};
     private static final String[] FREQUENCY_LABELS = {
-            "1 second", "5 seconds", "10 seconds", "30 seconds",
-            "60 seconds", "5 minutes", "15 minutes"
+            "1 second", "5 seconds", "10 seconds", "30 seconds", "60 seconds"
     };
     private static final int DEFAULT_FREQUENCY_INDEX = 3; // 30 seconds
 
