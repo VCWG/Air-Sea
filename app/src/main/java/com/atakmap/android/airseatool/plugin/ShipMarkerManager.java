@@ -24,11 +24,27 @@ public class ShipMarkerManager {
 
     private static final String TAG = "ShipMarkerManager";
     private static final String UID_PREFIX = "AIS-";
-    private static final String COT_TYPE = "a-n-S";
+    private static final String COT_TYPE             = "a-n-S-X-M";   // default: merchant
+    private static final String COT_TYPE_HOVERCRAFT   = "a-n-S-X-H";   // hovercraft (WIG)
+    private static final String COT_TYPE_FISHING      = "a-n-S-X-F";   // fishing
+    private static final String COT_TYPE_MERCHANT_TOW = "a-n-S-X-M-T-O"; // towing vessel
+    private static final String COT_TYPE_DREDGE       = "a-n-S-X-F-D-R"; // fishing dredge
+    private static final String COT_TYPE_LEISURE      = "a-n-S-X-R";   // leisure craft
+    private static final String COT_TYPE_FAST_CRAFT   = "a-n-S-X-A";   // fast recreational
+    private static final String COT_TYPE_LAW_ENFORCE  = "a-n-S-X-L";   // law enforcement
+    private static final String COT_TYPE_MERCHANT_TUG = "a-n-S-X-M-T-U"; // merchant tug
+    private static final String COT_TYPE_MERCHANT_PAX = "a-n-S-X-M-P"; // merchant passenger
+    private static final String COT_TYPE_MERCHANT_CRG = "a-n-S-X-M-C"; // merchant cargo
+    private static final String COT_TYPE_MERCHANT_TNK = "a-n-S-X-M-O"; // merchant oiler/tanker
+    private static final String COT_TYPE_HOSPITAL     = "a-n-S-N-M";   // noncombatant hospital
+    private static final String COT_TYPE_NONCOMBATANT = "a-n-S-N";     // noncombatant
+    private static final String COT_TYPE_NONCOMBAT_SH = "a-n-S-N-S";   // noncombatant service/harbor
+    private static final String COT_TYPE_COMBATANT    = "a-n-S-C";     // combatant
     private static final String GROUP_NAME = "AIS Ships";
     private static final long STALE_OFFSET_MS = 5 * 60 * 1000L;
 
     private final Map<Integer, Long> lastUpdateTimes = new ConcurrentHashMap<>();
+    private final Map<Integer, Integer> lastShipTypes = new ConcurrentHashMap<>();
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
     /** The CoT type we last programmatically set on each marker (uid → type). */
     private final Map<String, String> lastSetTypes = new ConcurrentHashMap<>();
@@ -85,8 +101,13 @@ public class ShipMarkerManager {
         long now = System.currentTimeMillis();
         Long lastUpdate = lastUpdateTimes.get(mmsi);
         if (lastUpdate != null && (now - lastUpdate) < updateFrequencyMs) {
-            return;
+            // Allow through if ship type changed (static data arrived)
+            Integer prevType = lastShipTypes.get(mmsi);
+            boolean typeChanged = shipType > 0
+                    && (prevType == null || prevType != shipType);
+            if (!typeChanged) return;
         }
+        lastShipTypes.put(mmsi, shipType);
         lastUpdateTimes.put(mmsi, now);
 
         String uid = UID_PREFIX + mmsi;
@@ -140,7 +161,7 @@ public class ShipMarkerManager {
                 detectUserTypeChange(uid, marker);
             }
 
-            String cotType = resolveEffectiveType(COT_TYPE, uid);
+            String cotType = resolveEffectiveType(resolveCotType(shipType), uid);
 
             if (marker == null) {
                 marker = new Marker(point, uid);
@@ -159,8 +180,9 @@ public class ShipMarkerManager {
                 markers.put(uid, marker);
             } else {
                 if (!cotType.equals(marker.getType())) {
-                    // User changed affiliation — recreate for icon refresh
-                    group.removeItem(marker);
+                    // Type changed — recreate for icon refresh
+                    MapGroup oldGroup = marker.getGroup();
+                    if (oldGroup != null) oldGroup.removeItem(marker);
                     markers.remove(uid);
                     marker = new Marker(point, uid);
                     marker.setType(cotType);
@@ -172,6 +194,7 @@ public class ShipMarkerManager {
                     marker.setMetaString("remarks", remarksText.toString());
                     marker.setMetaBoolean("readiness", true);
                     marker.setMetaBoolean("archive", false);
+                    marker.setEditable(true);
                     marker.setVisible(true);
                     group.addItem(marker);
                     markers.put(uid, marker);
@@ -194,6 +217,25 @@ public class ShipMarkerManager {
         } catch (Exception e) {
             Log.e(TAG, "Error updating marker for MMSI " + mmsi, e);
         }
+    }
+
+    private static String resolveCotType(int shipType) {
+        if (shipType >= 20 && shipType <= 29) return COT_TYPE_HOVERCRAFT;
+        if (shipType == 30)                   return COT_TYPE_FISHING;
+        if (shipType == 31 || shipType == 32) return COT_TYPE_MERCHANT_TOW;
+        if (shipType == 33)                   return COT_TYPE_DREDGE;
+        if (shipType == 35)                   return COT_TYPE_COMBATANT;
+        if (shipType == 36 || shipType == 37) return COT_TYPE_LEISURE;
+        if (shipType >= 40 && shipType <= 49) return COT_TYPE_FAST_CRAFT;
+        if (shipType == 50 || shipType == 53) return COT_TYPE_NONCOMBAT_SH;
+        if (shipType == 51 || shipType == 55) return COT_TYPE_LAW_ENFORCE;
+        if (shipType == 52)                   return COT_TYPE_MERCHANT_TUG;
+        if (shipType == 58)                   return COT_TYPE_HOSPITAL;
+        if (shipType == 59)                   return COT_TYPE_NONCOMBATANT;
+        if (shipType >= 60 && shipType <= 69) return COT_TYPE_MERCHANT_PAX;
+        if (shipType >= 70 && shipType <= 79) return COT_TYPE_MERCHANT_CRG;
+        if (shipType >= 80 && shipType <= 89) return COT_TYPE_MERCHANT_TNK;
+        return COT_TYPE; // default: merchant
     }
 
     /**
@@ -354,6 +396,7 @@ public class ShipMarkerManager {
         }
         markers.clear();
         lastUpdateTimes.clear();
+        lastShipTypes.clear();
         lastSetTypes.clear();
         userTypeOverrides.clear();
         aisGroup = null;
