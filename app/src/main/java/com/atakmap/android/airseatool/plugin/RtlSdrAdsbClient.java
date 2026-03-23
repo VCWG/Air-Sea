@@ -32,14 +32,21 @@ public class RtlSdrAdsbClient {
     private final AdsbStreamClient.Listener listener;
     private String currentHost;
     private int    currentPort;
+    private final int gainTenthsDb;
     private RtlTcpClient tcpClient;
     private volatile boolean running = false;
 
     public RtlSdrAdsbClient(AdsbStreamClient.Listener listener,
+                            String host, int port, int gainTenthsDb) {
+        this.listener      = listener;
+        this.currentHost   = host;
+        this.currentPort   = port;
+        this.gainTenthsDb  = gainTenthsDb;
+    }
+
+    public RtlSdrAdsbClient(AdsbStreamClient.Listener listener,
                             String host, int port) {
-        this.listener    = listener;
-        this.currentHost = host;
-        this.currentPort = port;
+        this(listener, host, port, RtlTcpClient.DEFAULT_GAIN_TENTHS_DB);
     }
 
     /** Connect to the local rtl_tcp server and start streaming ADS-B. Auto-reconnects on drop. */
@@ -50,7 +57,7 @@ public class RtlSdrAdsbClient {
             boolean errorReported = false; // true once we've told the UI the server is gone
 
             while (running) {
-                tcpClient = new RtlTcpClient(currentHost, currentPort);
+                tcpClient = new RtlTcpClient(currentHost, currentPort, gainTenthsDb);
                 try {
                     tcpClient.connect(1_090_000_000L, 2_000_000);
 

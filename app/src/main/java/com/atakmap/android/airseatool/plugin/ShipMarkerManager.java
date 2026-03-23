@@ -41,7 +41,10 @@ public class ShipMarkerManager {
     private static final String COT_TYPE_NONCOMBAT_SH = "a-n-S-N-S";   // noncombatant service/harbor
     private static final String COT_TYPE_COMBATANT    = "a-n-S-C";     // combatant
     private static final String GROUP_NAME = "AIS Ships";
-    private static final long STALE_OFFSET_MS = 5 * 60 * 1000L;
+    public  static final long DEFAULT_staleOffsetMs = 5 * 60 * 1000L;
+    private volatile long staleOffsetMs = DEFAULT_staleOffsetMs;
+
+    private volatile char affiliation = 'n';
 
     private final Map<Integer, Long> lastUpdateTimes = new ConcurrentHashMap<>();
     private final Map<Integer, Integer> lastShipTypes = new ConcurrentHashMap<>();
@@ -60,6 +63,22 @@ public class ShipMarkerManager {
 
     public void setUpdateFrequency(int seconds) {
         this.updateFrequencyMs = seconds * 1000L;
+    }
+
+    public void setStaleOffsetSeconds(int seconds) {
+        this.staleOffsetMs = seconds * 1000L;
+    }
+
+    public void setAffiliation(char affiliation) {
+        this.affiliation = affiliation;
+    }
+
+    /** Replace the affiliation character in a CoT type string (e.g. "a-n-S-X-M" → "a-f-S-X-M"). */
+    private String applyAffiliation(String cotType) {
+        int firstDash  = cotType.indexOf('-');
+        int secondDash = (firstDash >= 0) ? cotType.indexOf('-', firstDash + 1) : -1;
+        if (firstDash < 0 || secondDash < 0) return cotType;
+        return cotType.substring(0, firstDash + 1) + affiliation + cotType.substring(secondDash);
     }
 
     public void setBroadcastAll(boolean broadcast) {
@@ -219,7 +238,11 @@ public class ShipMarkerManager {
         }
     }
 
-    private static String resolveCotType(int shipType) {
+    private String resolveCotType(int shipType) {
+        return applyAffiliation(resolveBaseCotType(shipType));
+    }
+
+    private static String resolveBaseCotType(int shipType) {
         if (shipType >= 20 && shipType <= 29) return COT_TYPE_HOVERCRAFT;
         if (shipType == 30)                   return COT_TYPE_FISHING;
         if (shipType == 31 || shipType == 32) return COT_TYPE_MERCHANT_TOW;
@@ -327,7 +350,7 @@ public class ShipMarkerManager {
             event.setTime(now);
             event.setStart(now);
             event.setStale(new CoordinatedTime(
-                    now.getMilliseconds() + STALE_OFFSET_MS));
+                    now.getMilliseconds() + staleOffsetMs));
 
             event.setPoint(new CotPoint(lat, lon, 0,
                     CotPoint.UNKNOWN, CotPoint.UNKNOWN));

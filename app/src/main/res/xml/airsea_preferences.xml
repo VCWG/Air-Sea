@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  * Copyright 2026 VCWG
+  * SPDX-License-Identifier: GPL-3.0-only
+-->
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    android:title="Air+Sea">
+
+    <ListPreference
+        android:key="airsea_affiliation"
+        android:title="Default Track Affiliation"
+        android:summary="%s"
+        android:entries="@array/affiliation_labels"
+        android:entryValues="@array/affiliation_values"
+        android:defaultValue="n" />
+
+    <ListPreference
+        android:key="airsea_rtl_gain"
+        android:title="RTL-SDR Gain"
+        android:summary="%s"
+        android:entries="@array/rtl_gain_labels"
+        android:entryValues="@array/rtl_gain_values"
+        android:defaultValue="402" />
+
+    <EditTextPreference
+        android:key="airsea_rtl_range_km"
+        android:title="RTL-SDR Range Limit"
+        android:defaultValue="150" />
+
+</PreferenceScreen>

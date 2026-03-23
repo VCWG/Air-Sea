@@ -9,6 +9,7 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.preference.PreferenceManager;
 import android.net.Uri;
 import android.graphics.Color;
 import android.os.Handler;
@@ -30,6 +31,7 @@ import android.view.LayoutInflater;
 
 import com.atak.plugins.impl.PluginContextProvider;
 import com.atakmap.android.maps.MapView;
+import com.atakmap.app.preferences.ToolsPreferenceFragment;
 import com.atakmap.android.maps.Marker;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 import com.atakmap.coremap.log.Log;
@@ -51,6 +53,13 @@ public class AirSeaTool implements IPlugin,
 
     private static final String TAG = "AirSeaTool";
     private static final String PREFS_NAME = "ais_tool_prefs";
+
+    // Global tool preferences (stored in ATAK's default shared prefs; read by AirSeaPreferenceFragment)
+    static final String PREF_AFFILIATION      = "airsea_affiliation";
+    static final String PREF_RTL_GAIN         = "airsea_rtl_gain";
+    static final String PREF_RTL_RANGE_KM     = "airsea_rtl_range_km";
+    static final String PREF_AIR_STALE_SEC    = "airsea_air_stale_sec";
+    static final String PREF_SHIP_STALE_SEC   = "airsea_ship_stale_sec";
 
     // Maritime prefs
     private static final String PREF_MARITIME_ENABLED  = "maritime_enabled";
@@ -109,6 +118,20 @@ public class AirSeaTool implements IPlugin,
     private RtlSdrAisClient rtlAisClient;
 
     private boolean syncing = false;
+
+    // Global preferences (applied from Specific Tool Preferences)
+    private int    rtlGainTenthsDb = RtlTcpClient.DEFAULT_GAIN_TENTHS_DB;
+    private double rtlRangeM       = 150_000.0;
+
+    private final SharedPreferences.OnSharedPreferenceChangeListener globalPrefListener =
+            (sharedPreferences, key) -> {
+                if (PREF_AFFILIATION.equals(key) || PREF_RTL_GAIN.equals(key)
+                        || PREF_RTL_RANGE_KM.equals(key)
+                        || PREF_AIR_STALE_SEC.equals(key)
+                        || PREF_SHIP_STALE_SEC.equals(key)) {
+                    applyGlobalPreferences();
+                }
+            };
 
     // Views
     private View paneView;
@@ -183,12 +206,36 @@ public class AirSeaTool implements IPlugin,
     @Override
     public void onStart() {
         if (uiService != null) uiService.addToolbarItem(toolbarItem);
+
+        // Register in Specific Tool Preferences
+        ToolsPreferenceFragment.register(new ToolsPreferenceFragment.ToolPreference(
+                "Air+Sea",
+                "Default track affiliation, RTL-SDR gain and range",
+                "com.atakmap.android.airseatool",
+                pluginContext.getResources().getDrawable(R.drawable.ic_launcher),
+                new AirSeaPreferenceFragment(pluginContext)));
+
+        // Apply saved global prefs and watch for changes
+        MapView mv = MapView.getMapView();
+        if (mv != null) {
+            applyGlobalPreferences();
+            PreferenceManager.getDefaultSharedPreferences(mv.getContext())
+                    .registerOnSharedPreferenceChangeListener(globalPrefListener);
+        }
     }
 
     @Override
     public void onStop() {
         stopSync();
         if (uiService != null) uiService.removeToolbarItem(toolbarItem);
+
+        ToolsPreferenceFragment.unregister("com.atakmap.android.airseatool");
+
+        MapView mv = MapView.getMapView();
+        if (mv != null) {
+            PreferenceManager.getDefaultSharedPreferences(mv.getContext())
+                    .unregisterOnSharedPreferenceChangeListener(globalPrefListener);
+        }
     }
 
     private void showPane() {
@@ -532,6 +579,56 @@ public class AirSeaTool implements IPlugin,
 
     // ─── Preferences ──────────────────────────────────────────────────────
 
+    /** Read and apply the three global tool preferences (affiliation, gain, range). */
+    private void applyGlobalPreferences() {
+        MapView mv = MapView.getMapView();
+        if (mv == null) return;
+        SharedPreferences gp = PreferenceManager.getDefaultSharedPreferences(mv.getContext());
+
+        // Affiliation
+        String affilStr = gp.getString(PREF_AFFILIATION, "n");
+        char affilChar = (affilStr != null && !affilStr.isEmpty()) ? affilStr.charAt(0) : 'n';
+        shipMarkerManager.setAffiliation(affilChar);
+        airMarkerManager.setAffiliation(affilChar);
+
+        // RTL-SDR gain
+        String gainStr = gp.getString(PREF_RTL_GAIN,
+                String.valueOf(RtlTcpClient.DEFAULT_GAIN_TENTHS_DB));
+        try {
+            rtlGainTenthsDb = Integer.parseInt(gainStr);
+        } catch (NumberFormatException e) {
+            rtlGainTenthsDb = RtlTcpClient.DEFAULT_GAIN_TENTHS_DB;
+        }
+
+        // RTL-SDR range
+        String rangeStr = gp.getString(PREF_RTL_RANGE_KM, "150");
+        try {
+            rtlRangeM = Integer.parseInt(rangeStr) * 1000.0;
+        } catch (NumberFormatException e) {
+            rtlRangeM = 150_000.0;
+        }
+
+        // Air contact stale timeout
+        String airStaleStr = gp.getString(PREF_AIR_STALE_SEC,
+                String.valueOf(AirMarkerManager.DEFAULT_staleOffsetMs / 1000));
+        try {
+            airMarkerManager.setStaleOffsetSeconds(Integer.parseInt(airStaleStr));
+        } catch (NumberFormatException e) {
+            airMarkerManager.setStaleOffsetSeconds(
+                    (int) (AirMarkerManager.DEFAULT_staleOffsetMs / 1000));
+        }
+
+        // Ship contact stale timeout
+        String shipStaleStr = gp.getString(PREF_SHIP_STALE_SEC,
+                String.valueOf(ShipMarkerManager.DEFAULT_staleOffsetMs / 1000));
+        try {
+            shipMarkerManager.setStaleOffsetSeconds(Integer.parseInt(shipStaleStr));
+        } catch (NumberFormatException e) {
+            shipMarkerManager.setStaleOffsetSeconds(
+                    (int) (ShipMarkerManager.DEFAULT_staleOffsetMs / 1000));
+        }
+    }
+
     private void loadPreferences() {
         MapView mv = MapView.getMapView();
         if (mv == null) return;
@@ -763,7 +860,8 @@ public class AirSeaTool implements IPlugin,
         if (sourceIdx == 0) {
             // RTL-SDR: bypass update frequency throttle — update on every CPR fix
             airMarkerManager.setUpdateFrequency(0);
-            rtlAdsbClient = new RtlSdrAdsbClient(this, RTL_TCP_HOST, getRtlTcpPort());
+            rtlAdsbClient = new RtlSdrAdsbClient(this, RTL_TCP_HOST, getRtlTcpPort(),
+                    rtlGainTenthsDb);
             rtlAdsbClient.start();
             updateAirStatus("Air: Connecting to RTL-SDR Driver...");
             return;
@@ -967,8 +1065,6 @@ public class AirSeaTool implements IPlugin,
         updateAirStatus("Air: Connected to " + sourceName);
     }
 
-    private static final double RTL_MAX_RANGE_M = 150_000.0; // 150 km
-
     @Override
     public void onAircraft(Aircraft aircraft) {
         // Range cutoff: only for RTL-SDR, and only when we have a valid GPS fix.
@@ -981,7 +1077,7 @@ public class AirSeaTool implements IPlugin,
                 if (selfPt.isValid() && selfPt.getLatitude() != 0.0
                         && selfPt.getLongitude() != 0.0) {
                     GeoPoint acPt = new GeoPoint(aircraft.lat, aircraft.lon);
-                    if (selfPt.distanceTo(acPt) > RTL_MAX_RANGE_M) return;
+                    if (selfPt.distanceTo(acPt) > rtlRangeM) return;
                 }
             }
         }

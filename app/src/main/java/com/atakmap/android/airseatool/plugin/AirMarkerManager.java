@@ -31,7 +31,10 @@ public class AirMarkerManager {
     private static final String COT_TYPE_LTA        = "a-n-A-C-L";
     private static final String COT_TYPE_GROUND_VEH = "a-n-G-E-V-U";
     private static final String GROUP_NAME = "ADS-B Aircraft";
-    private static final long STALE_OFFSET_MS = 60 * 1000L;
+    public  static final long DEFAULT_staleOffsetMs = 60 * 1000L;
+    private volatile long staleOffsetMs = DEFAULT_staleOffsetMs;
+
+    private volatile char affiliation = 'n';
 
     private final Map<String, Long> lastUpdateTimes = new ConcurrentHashMap<>();
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
@@ -50,6 +53,22 @@ public class AirMarkerManager {
 
     public void setUpdateFrequency(int seconds) {
         this.updateFrequencyMs = seconds * 1000L;
+    }
+
+    public void setStaleOffsetSeconds(int seconds) {
+        this.staleOffsetMs = seconds * 1000L;
+    }
+
+    public void setAffiliation(char affiliation) {
+        this.affiliation = affiliation;
+    }
+
+    /** Replace the affiliation character in a CoT type string (e.g. "a-n-A-C-F" → "a-f-A-C-F"). */
+    private String applyAffiliation(String cotType) {
+        int firstDash  = cotType.indexOf('-');
+        int secondDash = (firstDash >= 0) ? cotType.indexOf('-', firstDash + 1) : -1;
+        if (firstDash < 0 || secondDash < 0) return cotType;
+        return cotType.substring(0, firstDash + 1) + affiliation + cotType.substring(secondDash);
     }
 
     public void setBroadcastAll(boolean broadcast) {
@@ -78,7 +97,7 @@ public class AirMarkerManager {
 
         long now = System.currentTimeMillis();
 
-        // Evict markers not updated within STALE_OFFSET_MS — run every 60 s
+        // Evict markers not updated within staleOffsetMs — run every 60 s
         if (now >= nextEvictMs) {
             nextEvictMs = now + 60_000L;
             evictStale(now);
@@ -200,7 +219,11 @@ public class AirMarkerManager {
         return autoType;
     }
 
-    private static String resolveCotType(Aircraft a) {
+    private String resolveCotType(Aircraft a) {
+        return applyAffiliation(resolveBaseCotType(a));
+    }
+
+    private static String resolveBaseCotType(Aircraft a) {
         String cat = a.category;
         if (cat == null || cat.isEmpty()) return COT_TYPE;
         switch (cat) {
@@ -266,7 +289,7 @@ public class AirMarkerManager {
             event.setTime(now);
             event.setStart(now);
             event.setStale(new CoordinatedTime(
-                    now.getMilliseconds() + STALE_OFFSET_MS));
+                    now.getMilliseconds() + staleOffsetMs));
             double hae = (a.onGround || a.altitudeFt <= 0)
                     ? CotPoint.UNKNOWN
                     : a.altitudeFt * 0.3048;
@@ -324,7 +347,7 @@ public class AirMarkerManager {
         Iterator<Map.Entry<String, Long>> it = lastUpdateTimes.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<String, Long> entry = it.next();
-            if (now - entry.getValue() > STALE_OFFSET_MS) {
+            if (now - entry.getValue() > staleOffsetMs) {
                 String uid = UID_PREFIX + entry.getKey();
                 Marker m = markers.remove(uid);
                 if (m != null) {

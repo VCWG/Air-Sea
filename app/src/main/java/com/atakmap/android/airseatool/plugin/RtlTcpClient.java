@@ -40,10 +40,9 @@ public class RtlTcpClient {
     private static final int CMD_SET_GAIN        = 0x04;  // tenths of dB
     private static final int CMD_SET_AGC_MODE    = 0x08;  // 1=enabled
 
-    // Fixed manual gain: 40.2 dB (402 tenths) — best compromise for ADS-B
-    // with R820T/R820T2.  High enough for ~40+ nm range, low enough to
-    // avoid ADC clipping from aircraft at 1 km.
-    private static final int GAIN_TENTHS_DB      = 402;
+    /** Default gain: 40.2 dB (402 tenths) — best compromise for ADS-B with R820T/R820T2. */
+    public  static final int DEFAULT_GAIN_TENTHS_DB = 402;
+    private final        int gainTenthsDb;
 
     /** IQ sample callback; called on the streaming thread. */
     @FunctionalInterface
@@ -51,17 +50,22 @@ public class RtlTcpClient {
         void onSamples(byte[] buf, int len);
     }
 
+    public RtlTcpClient(String host, int port, int gainTenthsDb) {
+        this.host          = host;
+        this.port          = port;
+        this.gainTenthsDb  = gainTenthsDb;
+    }
+
     public RtlTcpClient(String host, int port) {
-        this.host = host;
-        this.port = port;
+        this(host, port, DEFAULT_GAIN_TENTHS_DB);
     }
 
     public RtlTcpClient(int port) {
-        this("127.0.0.1", port);
+        this("127.0.0.1", port, DEFAULT_GAIN_TENTHS_DB);
     }
 
     public RtlTcpClient() {
-        this("127.0.0.1", DEFAULT_PORT);
+        this("127.0.0.1", DEFAULT_PORT, DEFAULT_GAIN_TENTHS_DB);
     }
 
     private Socket          socket;
@@ -95,11 +99,11 @@ public class RtlTcpClient {
         sendCmd(CMD_SET_SAMPLE_RATE, sampleRateHz);
         sendCmd(CMD_SET_FREQ,        (int) freqHz);
         sendCmd(CMD_SET_GAIN_MODE,   1);              // manual gain
-        sendCmd(CMD_SET_GAIN,        GAIN_TENTHS_DB); // 40.2 dB
+        sendCmd(CMD_SET_GAIN,        gainTenthsDb);
         sendCmd(CMD_SET_AGC_MODE,    0);              // RTL AGC off
 
         Log.d(TAG, "rtl_tcp configured: freq=" + freqHz + " rate=" + sampleRateHz
-                + " gain=" + (GAIN_TENTHS_DB / 10.0) + " dB (manual)");
+                + " gain=" + (gainTenthsDb / 10.0) + " dB (manual)");
     }
 
     /**

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  * Copyright 2026 VCWG
+  * SPDX-License-Identifier: GPL-3.0-only
+-->
+<resources>
+
+    <!-- Default track affiliation -->
+    <string-array name="affiliation_labels">
+        <item>Neutral</item>
+        <item>Unknown</item>
+        <item>Friendly</item>
+        <item>Hostile</item>
+    </string-array>
+    <string-array name="affiliation_values">
+        <item>n</item>
+        <item>u</item>
+        <item>f</item>
+        <item>h</item>
+    </string-array>
+
+    <!-- RTL-SDR valid gain steps for R820T/R820T2 (tenths of dB as string entry values) -->
+    <string-array name="rtl_gain_labels">
+        <item>0.0 dB</item>
+        <item>0.9 dB</item>
+        <item>1.4 dB</item>
+        <item>2.7 dB</item>
+        <item>3.7 dB</item>
+        <item>7.7 dB</item>
+        <item>8.7 dB</item>
+        <item>12.5 dB</item>
+        <item>14.4 dB</item>
+        <item>15.7 dB</item>
+        <item>16.6 dB</item>
+        <item>19.7 dB</item>
+        <item>20.7 dB</item>
+        <item>22.9 dB</item>
+        <item>25.4 dB</item>
+        <item>28.0 dB</item>
+        <item>29.7 dB</item>
+        <item>32.8 dB</item>
+        <item>33.8 dB</item>
+        <item>36.4 dB</item>
+        <item>37.2 dB</item>
+        <item>38.6 dB</item>
+        <item>40.2 dB (recommended)</item>
+        <item>42.1 dB</item>
+        <item>43.4 dB</item>
+        <item>43.9 dB</item>
+        <item>44.5 dB</item>
+        <item>48.0 dB</item>
+        <item>49.6 dB</item>
+    </string-array>
+    <string-array name="rtl_gain_values">
+        <item>0</item>
+        <item>9</item>
+        <item>14</item>
+        <item>27</item>
+        <item>37</item>
+        <item>77</item>
+        <item>87</item>
+        <item>125</item>
+        <item>144</item>
+        <item>157</item>
+        <item>166</item>
+        <item>197</item>
+        <item>207</item>
+        <item>229</item>
+        <item>254</item>
+        <item>280</item>
+        <item>297</item>
+        <item>328</item>
+        <item>338</item>
+        <item>364</item>
+        <item>372</item>
+        <item>386</item>
+        <item>402</item>
+        <item>421</item>
+        <item>434</item>
+        <item>439</item>
+        <item>445</item>
+        <item>480</item>
+        <item>496</item>
+    </string-array>
+
+</resources>
