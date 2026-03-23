@@ -25,6 +25,14 @@ abstract class AbstractReadsbSource implements AdsbSource {
 
     private static final String TAG = "AbstractReadsbSource";
 
+    private volatile HttpURLConnection pendingConn = null;
+
+    @Override
+    public void cancel() {
+        HttpURLConnection conn = pendingConn;
+        if (conn != null) conn.disconnect();
+    }
+
     /** Base URL without trailing slash, e.g. "https://opendata.adsb.fi" */
     abstract String getBaseUrl();
 
@@ -66,7 +74,7 @@ abstract class AbstractReadsbSource implements AdsbSource {
         return Math.sqrt(latNm * latNm + lonNm * lonNm);
     }
 
-    static String httpGet(String urlStr, String bearerToken) throws Exception {
+    String httpGet(String urlStr, String bearerToken) throws Exception {
         HttpURLConnection conn = (HttpURLConnection)
                 new URL(urlStr).openConnection();
         conn.setConnectTimeout(10000);
@@ -76,6 +84,7 @@ abstract class AbstractReadsbSource implements AdsbSource {
         if (bearerToken != null && !bearerToken.isEmpty()) {
             conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
         }
+        pendingConn = conn;
         try {
             int code = conn.getResponseCode();
             if (code != 200) throw new Exception("HTTP " + code);
@@ -87,6 +96,7 @@ abstract class AbstractReadsbSource implements AdsbSource {
             }
             return sb.toString();
         } finally {
+            pendingConn = null;
             conn.disconnect();
         }
     }

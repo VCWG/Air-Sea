@@ -35,6 +35,7 @@ public class RtlSdrAdsbClient {
     private final int gainTenthsDb;
     private RtlTcpClient tcpClient;
     private volatile boolean running = false;
+    private Thread thread;
 
     public RtlSdrAdsbClient(AdsbStreamClient.Listener listener,
                             String host, int port, int gainTenthsDb) {
@@ -52,7 +53,7 @@ public class RtlSdrAdsbClient {
     /** Connect to the local rtl_tcp server and start streaming ADS-B. Auto-reconnects on drop. */
     public void start() {
         running = true;
-        new Thread(() -> {
+        thread = new Thread(() -> {
             int refusedCount = 0;
             boolean errorReported = false; // true once we've told the UI the server is gone
 
@@ -128,11 +129,18 @@ public class RtlSdrAdsbClient {
             }
             Log.d(TAG, "ADS-B streaming stopped");
             listener.onDisconnected(SOURCE_NAME);
-        }, "RTL-ADSB").start();
+        }, "RTL-ADSB");
+        thread.start();
     }
 
     public void stop() {
         running = false;
         if (tcpClient != null) tcpClient.disconnect();
+        Thread t = thread;
+        if (t != null) {
+            t.interrupt();
+            try { t.join(3000); } catch (InterruptedException ignored) {}
+            thread = null;
+        }
     }
 }

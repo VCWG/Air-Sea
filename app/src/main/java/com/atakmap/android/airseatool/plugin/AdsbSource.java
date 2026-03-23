@@ -16,6 +16,9 @@ public interface AdsbSource {
                double minLon, double maxLon,
                Callback callback);
 
+    /** Cancel any in-flight HTTP request immediately. No-op if none pending. */
+    default void cancel() {}
+
     interface Callback {
         void onResult(List<Aircraft> aircraft);
         void onError(String error);

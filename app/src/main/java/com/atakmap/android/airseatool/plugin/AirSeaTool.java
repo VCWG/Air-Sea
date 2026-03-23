@@ -1042,10 +1042,13 @@ public class AirSeaTool implements IPlugin,
 
     @Override
     public void onDisconnected() {
-        if (syncing
-                && maritimeEnableCheckbox != null
-                && maritimeEnableCheckbox.isChecked()
-                && lastApiKey != null && lastBoundingBox != null) {
+        // Called from the AIS WebSocket thread — marshal everything to the UI thread
+        // so that aisClient and syncing are only touched from one thread.
+        mainHandler.post(() -> {
+            if (!syncing
+                    || maritimeEnableCheckbox == null
+                    || !maritimeEnableCheckbox.isChecked()
+                    || lastApiKey == null || lastBoundingBox == null) return;
             updateStatus("Maritime: Reconnecting...");
             Log.d(TAG, "AIS auto-reconnecting...");
             aisClient = null;
@@ -1054,7 +1057,7 @@ public class AirSeaTool implements IPlugin,
                 aisClient = new AisStreamClient(this);
                 aisClient.connect(lastApiKey, lastBoundingBox);
             }, 3000);
-        }
+        });
     }
 
     // ─── AdsbStreamClient.Listener ────────────────────────────────────────

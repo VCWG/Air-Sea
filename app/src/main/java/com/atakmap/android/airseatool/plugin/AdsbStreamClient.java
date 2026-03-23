@@ -84,6 +84,7 @@ public class AdsbStreamClient {
 
     public void stop() {
         running = false;
+        source.cancel();
         if (thread != null) {
             thread.interrupt();
             thread = null;

@@ -318,7 +318,7 @@ public class RtlSdrDevice {
                                 + "," + (buf[2]&0xff) + "," + (buf[3]&0xff) + "]");
                     totalBytes += n;
                     cb.onSamples(buf, n);
-                } else if (n < 0 && streaming) {
+                } else if (n <= 0 && streaming) {
                     errors++;
                     if (errors <= 5 || errors % 50 == 0)
                         Log.w(TAG, "Bulk transfer error " + errors + ": " + n);

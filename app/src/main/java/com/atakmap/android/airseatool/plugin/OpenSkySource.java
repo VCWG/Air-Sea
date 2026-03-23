@@ -36,7 +36,7 @@ import java.util.List;
  *  12 sensors     13 geo_alt(m)  14 squawk
  *  15 spi         16 pos_source  17 category
  */
-public class OpenSkySource implements AdsbSource {
+public class OpenSkySource extends AbstractReadsbSource {
 
     private static final String TAG = "OpenSkySource";
 
@@ -51,6 +51,8 @@ public class OpenSkySource implements AdsbSource {
     private long tokenExpiryMs = 0L;
 
     @Override
+    String getBaseUrl() { return ""; } // unused — fetch() is fully overridden
+
     public String getName() {
         return "OpenSky";
     }
@@ -77,7 +79,7 @@ public class OpenSkySource implements AdsbSource {
             if (hasCredentials) {
                 bearer = acquireToken(clientId, clientSecret);
             }
-            String response = AbstractReadsbSource.httpGet(urlStr, bearer);
+            String response = httpGet(urlStr, bearer);
             callback.onResult(parseStateVectors(response));
         } catch (Exception e) {
             Log.e(TAG, "fetch error", e);
