@@ -30,6 +30,10 @@ public class ShipMarkerManager {
 
     private final Map<Integer, Long> lastUpdateTimes = new ConcurrentHashMap<>();
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
+    /** The CoT type we last programmatically set on each marker (uid → type). */
+    private final Map<String, String> lastSetTypes = new ConcurrentHashMap<>();
+    /** User-overridden affiliation characters (uid → affiliation char, e.g. "h"). */
+    private final Map<String, String> userAffiliations = new ConcurrentHashMap<>();
     private MapGroup aisGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
@@ -131,36 +135,90 @@ public class ShipMarkerManager {
                     : (Marker.STYLE_ROTATE_HEADING_NOARROW_MASK
                             | Marker.STYLE_SMOOTH_ROTATION_MASK);
 
+            // Detect user affiliation change before computing effective type
+            if (marker != null) {
+                detectUserAffiliation(uid, marker);
+            }
+
+            String cotType = applyUserAffiliation(COT_TYPE, uid);
+
             if (marker == null) {
                 marker = new Marker(point, uid);
-                marker.setType(COT_TYPE);
+                marker.setType(cotType);
                 marker.setStyle(style);
                 marker.setTitle(shipName);
                 marker.setMetaString("callsign", shipName);
-                marker.setMetaString("how", "m-g");
+                marker.setMetaString("how", "h-g-i-g-o");
                 marker.setTrack(cog, sogMps);
                 marker.setMetaString("remarks", remarksText.toString());
                 marker.setMetaBoolean("readiness", true);
                 marker.setMetaBoolean("archive", false);
+                marker.setEditable(true);
                 marker.setVisible(true);
                 group.addItem(marker);
                 markers.put(uid, marker);
             } else {
-                marker.setPoint(point);
-                marker.setStyle(style);
-                marker.setTitle(shipName);
-                marker.setMetaString("callsign", shipName);
-                marker.setTrack(cog, sogMps);
-                marker.setMetaString("remarks", remarksText.toString());
+                if (!cotType.equals(marker.getType())) {
+                    // User changed affiliation — recreate for icon refresh
+                    group.removeItem(marker);
+                    markers.remove(uid);
+                    marker = new Marker(point, uid);
+                    marker.setType(cotType);
+                    marker.setStyle(style);
+                    marker.setTitle(shipName);
+                    marker.setMetaString("callsign", shipName);
+                    marker.setMetaString("how", "h-g-i-g-o");
+                    marker.setTrack(cog, sogMps);
+                    marker.setMetaString("remarks", remarksText.toString());
+                    marker.setMetaBoolean("readiness", true);
+                    marker.setMetaBoolean("archive", false);
+                    marker.setVisible(true);
+                    group.addItem(marker);
+                    markers.put(uid, marker);
+                } else {
+                    marker.setPoint(point);
+                    marker.setStyle(style);
+                    marker.setTitle(shipName);
+                    marker.setMetaString("callsign", shipName);
+                    marker.setTrack(cog, sogMps);
+                    marker.setMetaString("remarks", remarksText.toString());
+                }
             }
+
+            lastSetTypes.put(uid, cotType);
 
             if (broadcastAll) {
                 broadcastMarker(uid, shipName, lat, lon, cog, sogMps,
-                        remarksText.toString());
+                        cotType, remarksText.toString());
             }
         } catch (Exception e) {
             Log.e(TAG, "Error updating marker for MMSI " + mmsi, e);
         }
+    }
+
+    /**
+     * Detect if the user changed the marker's affiliation via ATAK's UI.
+     */
+    private void detectUserAffiliation(String uid, Marker marker) {
+        String currentType = marker.getType();
+        String lastSet = lastSetTypes.get(uid);
+        if (lastSet == null || currentType == null) return;
+        if (currentType.equals(lastSet)) return;
+        if (currentType.length() >= 3 && currentType.charAt(0) == 'a'
+                && currentType.charAt(1) == '-') {
+            String aff = String.valueOf(currentType.charAt(2));
+            userAffiliations.put(uid, aff);
+            Log.d(TAG, uid + " user set affiliation: " + aff);
+        }
+    }
+
+    /**
+     * Apply a user-overridden affiliation character to a CoT type.
+     */
+    private String applyUserAffiliation(String baseType, String uid) {
+        String aff = userAffiliations.get(uid);
+        if (aff == null || baseType.length() < 3) return baseType;
+        return baseType.substring(0, 2) + aff + baseType.substring(3);
     }
 
     private static String getNavStatusText(int status) {
@@ -217,12 +275,13 @@ public class ShipMarkerManager {
     }
 
     private void broadcastMarker(String uid, String callsign, double lat,
-            double lon, double cog, double speed, String remarks) {
+            double lon, double cog, double speed,
+            String cotType, String remarks) {
         try {
             CotEvent event = new CotEvent();
             event.setUID(uid);
-            event.setType(COT_TYPE);
-            event.setHow("m-g");
+            event.setType(cotType);
+            event.setHow("h-g-i-g-o");
 
             CoordinatedTime now = new CoordinatedTime();
             event.setTime(now);
@@ -277,7 +336,7 @@ public class ShipMarkerManager {
                         m.getMetaString("callsign", m.getTitle()),
                         p.getLatitude(), p.getLongitude(),
                         track[0], track[1],
-                        m.getMetaString("remarks", ""));
+                        m.getType(), m.getMetaString("remarks", ""));
             } catch (Exception e) {
                 Log.e(TAG, "Error broadcasting existing marker", e);
             }
@@ -291,6 +350,8 @@ public class ShipMarkerManager {
         }
         markers.clear();
         lastUpdateTimes.clear();
+        lastSetTypes.clear();
+        userAffiliations.clear();
         aisGroup = null;
     }
 }

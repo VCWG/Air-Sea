@@ -27,13 +27,17 @@ public class AirMarkerManager {
     private static final String UID_PREFIX = "ADSB-";
     private static final String COT_TYPE           = "a-n-A";
     private static final String COT_TYPE_FIXED_WING = "a-n-A-C-F";
-    private static final String COT_TYPE_ROTARY     = "a-n-A-C-R";
+    private static final String COT_TYPE_ROTARY     = "a-n-A-C-H";
     private static final String COT_TYPE_LTA        = "a-n-A-C-L";
     private static final String GROUP_NAME = "ADS-B Aircraft";
     private static final long STALE_OFFSET_MS = 60 * 1000L;
 
     private final Map<String, Long> lastUpdateTimes = new ConcurrentHashMap<>();
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
+    /** The CoT type we last programmatically set on each marker (uid → type). */
+    private final Map<String, String> lastSetTypes = new ConcurrentHashMap<>();
+    /** User-overridden affiliation characters (uid → affiliation char, e.g. "h"). */
+    private final Map<String, String> userAffiliations = new ConcurrentHashMap<>();
     private MapGroup airGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
@@ -90,7 +94,6 @@ public class AirMarkerManager {
 
         try {
             String displayName = resolveDisplayName(a);
-            String cotType = resolveCotType(a);
             String remarks = buildRemarks(a);
             double speedMps = a.groundSpeedKnots * 0.514444;
             // Use UNKNOWN altitude for on-ground aircraft so ATAK doesn't
@@ -110,59 +113,93 @@ public class AirMarkerManager {
             GeoPoint point = new GeoPoint(a.lat, a.lon, altM);
             Marker marker = markers.get(uid);
 
+            // Detect user affiliation change before computing the effective type
+            if (marker != null) {
+                detectUserAffiliation(uid, marker);
+            }
+
+            // Auto-category type, then apply any user affiliation override
+            String cotType = applyUserAffiliation(resolveCotType(a), uid);
+
             if (marker == null) {
-                marker = new Marker(point, uid);
-                marker.setType(cotType);
+                marker = createMarker(point, uid, cotType, style, displayName,
+                        a.trackDeg, speedMps, remarks, altM);
+                group.addItem(marker);
+                markers.put(uid, marker);
+            } else if (!cotType.equals(marker.getType())) {
+                // Type changed (auto-category update) — recreate for icon refresh
+                group.removeItem(marker);
+                markers.remove(uid);
+                marker = createMarker(point, uid, cotType, style, displayName,
+                        a.trackDeg, speedMps, remarks, altM);
+                group.addItem(marker);
+                markers.put(uid, marker);
+            } else {
+                marker.setPoint(point);
                 marker.setStyle(style);
                 marker.setTitle(displayName);
                 marker.setMetaString("callsign", displayName);
-                marker.setMetaString("how", "m-g");
                 marker.setTrack(a.trackDeg, speedMps);
                 marker.setMetaString("remarks", remarks);
                 if (!Double.isNaN(altM))
                     marker.setMetaDouble("altitude", altM);
-                marker.setMetaBoolean("readiness", true);
-                marker.setMetaBoolean("archive", false);
-                marker.setVisible(true);
-                group.addItem(marker);
-                markers.put(uid, marker);
-            } else {
-                // If the CoT type changed, remove and recreate the marker
-                // so ATAK refreshes the icon
-                if (!cotType.equals(marker.getType())) {
-                    group.removeItem(marker);
-                    markers.remove(uid);
-                    marker = new Marker(point, uid);
-                    marker.setType(cotType);
-                    marker.setStyle(style);
-                    marker.setTitle(displayName);
-                    marker.setMetaString("callsign", displayName);
-                    marker.setMetaString("how", "m-g");
-                    marker.setTrack(a.trackDeg, speedMps);
-                    marker.setMetaString("remarks", remarks);
-                    if (!Double.isNaN(altM))
-                        marker.setMetaDouble("altitude", altM);
-                    marker.setMetaBoolean("readiness", true);
-                    marker.setMetaBoolean("archive", false);
-                    marker.setVisible(true);
-                    group.addItem(marker);
-                    markers.put(uid, marker);
-                } else {
-                    marker.setPoint(point);
-                    marker.setStyle(style);
-                    marker.setTitle(displayName);
-                    marker.setMetaString("callsign", displayName);
-                    marker.setTrack(a.trackDeg, speedMps);
-                    marker.setMetaString("remarks", remarks);
-                    if (!Double.isNaN(altM))
-                        marker.setMetaDouble("altitude", altM);
-                }
             }
+
+            lastSetTypes.put(uid, cotType);
 
             if (broadcastAll) broadcastMarker(uid, displayName, a, cotType, remarks);
         } catch (Exception e) {
             Log.e(TAG, "Error updating aircraft marker " + a.icao24, e);
         }
+    }
+
+    private Marker createMarker(GeoPoint point, String uid, String cotType,
+                                int style, String displayName,
+                                double trackDeg, double speedMps,
+                                String remarks, double altM) {
+        Marker marker = new Marker(point, uid);
+        marker.setType(cotType);
+        marker.setStyle(style);
+        marker.setTitle(displayName);
+        marker.setMetaString("callsign", displayName);
+        marker.setMetaString("how", "h-g-i-g-o");
+        marker.setTrack(trackDeg, speedMps);
+        marker.setMetaString("remarks", remarks);
+        if (!Double.isNaN(altM))
+            marker.setMetaDouble("altitude", altM);
+        marker.setMetaBoolean("readiness", true);
+        marker.setMetaBoolean("archive", false);
+        marker.setEditable(true);
+        marker.setVisible(true);
+        return marker;
+    }
+
+    /**
+     * Detect if the user changed the marker's affiliation via ATAK's UI.
+     * Compares the marker's current type to what we last set programmatically.
+     */
+    private void detectUserAffiliation(String uid, Marker marker) {
+        String currentType = marker.getType();
+        String lastSet = lastSetTypes.get(uid);
+        if (lastSet == null || currentType == null) return;
+        if (currentType.equals(lastSet)) return;
+        // Type was changed externally — extract the affiliation character
+        if (currentType.length() >= 3 && currentType.charAt(0) == 'a'
+                && currentType.charAt(1) == '-') {
+            String aff = String.valueOf(currentType.charAt(2));
+            userAffiliations.put(uid, aff);
+            Log.d(TAG, uid + " user set affiliation: " + aff);
+        }
+    }
+
+    /**
+     * Apply a user-overridden affiliation character to an auto-category CoT type.
+     * e.g. auto="a-n-A-C-F" + user="h" → "a-h-A-C-F"
+     */
+    private String applyUserAffiliation(String autoType, String uid) {
+        String aff = userAffiliations.get(uid);
+        if (aff == null || autoType.length() < 3) return autoType;
+        return autoType.substring(0, 2) + aff + autoType.substring(3);
     }
 
     private static String resolveCotType(Aircraft a) {
@@ -222,7 +259,7 @@ public class AirMarkerManager {
             CotEvent event = new CotEvent();
             event.setUID(uid);
             event.setType(cotType);
-            event.setHow("m-g");
+            event.setHow("h-g-i-g-o");
 
             CoordinatedTime now = new CoordinatedTime();
             event.setTime(now);
@@ -290,6 +327,8 @@ public class AirMarkerManager {
                 String uid = UID_PREFIX + entry.getKey();
                 Marker m = markers.remove(uid);
                 if (m != null && group != null) group.removeItem(m);
+                lastSetTypes.remove(uid);
+                userAffiliations.remove(uid);
                 it.remove();
             }
         }
@@ -300,6 +339,8 @@ public class AirMarkerManager {
         if (group != null) group.clearItems();
         markers.clear();
         lastUpdateTimes.clear();
+        lastSetTypes.clear();
+        userAffiliations.clear();
         airGroup = null;
     }
 }
