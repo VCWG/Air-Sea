@@ -85,8 +85,10 @@ public class AdsbStreamClient {
     public void stop() {
         running = false;
         source.cancel();
-        if (thread != null) {
-            thread.interrupt();
+        Thread t = thread;
+        if (t != null) {
+            t.interrupt();
+            try { t.join(3000); } catch (InterruptedException ignored) {}
             thread = null;
         }
     }

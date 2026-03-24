@@ -34,7 +34,7 @@ import java.util.List;
  *  6  latitude    7  baro_alt(m) 8  on_ground
  *  9  velocity(m/s) 10 true_track 11 vertical_rate
  *  12 sensors     13 geo_alt(m)  14 squawk
- *  15 spi         16 pos_source  17 category
+ *  15 spi         16 pos_source  17 category (plain int 0-20, NOT nibble-encoded)
  */
 public class OpenSkySource extends AbstractReadsbSource {
 
@@ -69,7 +69,8 @@ public class OpenSkySource extends AbstractReadsbSource {
                       Callback callback) {
         String urlStr = STATES_URL
                 + "?lamin=" + minLat + "&lomin=" + minLon
-                + "&lamax=" + maxLat + "&lomax=" + maxLon;
+                + "&lamax=" + maxLat + "&lomax=" + maxLon
+                + "&extended=1";
         Log.d(TAG, "fetch: " + urlStr);
 
         try {
@@ -144,44 +145,27 @@ public class OpenSkySource extends AbstractReadsbSource {
     }
 
     /**
-     * OpenSky category field encodes ADS-B emitter category as a single int:
-     * high nibble = set (A=0xA0, B=0xB0, C=0xC0, D=0xD0), low nibble = sub-category.
+     * OpenSky category field is a plain integer 0–20 mapping directly to
+     * ADS-B emitter category values per the OpenSky REST API spec.
      */
     private static String decodeOpenSkyCategory(int cat) {
-        if (cat == 0) return "";
-        int set = (cat >> 4) & 0xF;
-        int sub = cat & 0xF;
-        switch (set) {
-            case 0xA:
-                switch (sub) {
-                    case 1: return "Light";
-                    case 2: return "Small";
-                    case 3: return "Large";
-                    case 4: return "High Vortex Large";
-                    case 5: return "Heavy";
-                    case 6: return "High Performance";
-                    case 7: return "Rotorcraft";
-                    default: return "";
-                }
-            case 0xB:
-                switch (sub) {
-                    case 1: return "Glider/Sailplane";
-                    case 2: return "Lighter-than-Air";
-                    case 3: return "Parachutist/Skydiver";
-                    case 4: return "Ultralight/Hang-glider";
-                    case 6: return "UAV";
-                    case 7: return "Space Vehicle";
-                    default: return "";
-                }
-            case 0xC:
-                switch (sub) {
-                    case 1: return "Emergency Vehicle";
-                    case 2: return "Service Vehicle";
-                    case 3: return "Ground Obstruction";
-                    default: return "Surface";
-                }
-            default:
-                return "";
+        switch (cat) {
+            case 2:  return "Light";
+            case 3:  return "Small";
+            case 4:  return "Large";
+            case 5:  return "High Vortex Large";
+            case 6:  return "Heavy";
+            case 7:  return "High Performance";
+            case 8:  return "Rotorcraft";
+            case 9:  return "Glider/Sailplane";
+            case 10: return "Lighter-than-Air";
+            case 11: return "Parachutist/Skydiver";
+            case 12: return "Ultralight/Hang-glider";
+            case 14: return "UAV";
+            case 15: return "Space Vehicle";
+            case 16: return "Emergency Vehicle";
+            case 17: return "Service Vehicle";
+            default: return "";
         }
     }
 
@@ -220,7 +204,7 @@ public class OpenSkySource extends AbstractReadsbSource {
                 a.verticalRateFpm = s.getDouble(11) * 196.85;
             }
             // category: integer emitter category
-            if (!s.isNull(17)) {
+            if (s.length() > 17 && !s.isNull(17)) {
                 a.category = decodeOpenSkyCategory(s.optInt(17, 0));
             }
             result.add(a);

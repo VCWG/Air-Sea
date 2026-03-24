@@ -42,6 +42,8 @@ public class AirMarkerManager {
     private final Map<String, String> lastSetTypes = new ConcurrentHashMap<>();
     /** User-overridden full CoT type (uid → complete type string). */
     private final Map<String, String> userTypeOverrides = new ConcurrentHashMap<>();
+    /** Last known non-empty category per ICAO — persists across polls that return category=0. */
+    private final Map<String, String> categoryCache = new ConcurrentHashMap<>();
     private MapGroup airGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
@@ -94,6 +96,14 @@ public class AirMarkerManager {
         if (a.icao24 == null || a.icao24.isEmpty()) return;
         // Skip frames with no position decoded yet (lat/lon both 0 = no CPR fix)
         if (a.lat == 0.0 && a.lon == 0.0) return;
+
+        // Persist category across polls that return empty (e.g. OpenSky snapshot misses TC1-4)
+        if (!a.category.isEmpty()) {
+            categoryCache.put(a.icao24, a.category);
+        } else {
+            String cached = categoryCache.get(a.icao24);
+            if (cached != null) a.category = cached;
+        }
 
         long now = System.currentTimeMillis();
 
@@ -356,6 +366,7 @@ public class AirMarkerManager {
                 }
                 lastSetTypes.remove(uid);
                 userTypeOverrides.remove(uid);
+                categoryCache.remove(entry.getKey());
                 it.remove();
             }
         }
@@ -374,6 +385,7 @@ public class AirMarkerManager {
         lastUpdateTimes.clear();
         lastSetTypes.clear();
         userTypeOverrides.clear();
+        categoryCache.clear();
         airGroup = null;
     }
 }

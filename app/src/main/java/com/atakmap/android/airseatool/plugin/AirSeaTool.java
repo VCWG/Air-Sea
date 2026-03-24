@@ -115,6 +115,8 @@ public class AirSeaTool implements IPlugin,
 
     // Maritime RTL-SDR client
     private RtlSdrAisClient rtlAisClient;
+    /** Pending AIS auto-reconnect callback — must be cancelled on stop. */
+    private Runnable aisReconnectRunnable;
 
     private boolean syncing = false;
 
@@ -235,6 +237,11 @@ public class AirSeaTool implements IPlugin,
             PreferenceManager.getDefaultSharedPreferences(mv.getContext())
                     .unregisterOnSharedPreferenceChangeListener(globalPrefListener);
         }
+
+        // Invalidate pane so it is recreated fresh on next onStart/showPane
+        pane = null;
+        paneView = null;
+        syncBtn = null;
     }
 
     private void showPane() {
@@ -256,6 +263,8 @@ public class AirSeaTool implements IPlugin,
 
         if (!uiService.isPaneVisible(pane))
             uiService.showPane(pane, null);
+        // Post to ensure button reflects syncing state AFTER ATAK finishes showing the pane
+        mainHandler.post(this::updateSyncButton);
     }
 
     private void setupUI(View view) {
@@ -822,10 +831,13 @@ public class AirSeaTool implements IPlugin,
         stopMaritimeSync();
         stopAirSync();
         setInputsEnabled(true);
+        updateSyncButton();
     }
 
     private void startMaritimeSync() {
-        if (aisClient != null || rtlAisClient != null) return;
+        // Defensive: stop any existing client to prevent orphan connections
+        if (aisClient != null) { aisClient.disconnect(); aisClient = null; }
+        if (rtlAisClient != null) { rtlAisClient.disconnect(); rtlAisClient = null; }
 
         // aisstream.io
         if (apiKey == null || apiKey.isEmpty()) {
@@ -839,6 +851,10 @@ public class AirSeaTool implements IPlugin,
     }
 
     private void stopMaritimeSync() {
+        if (aisReconnectRunnable != null) {
+            mainHandler.removeCallbacks(aisReconnectRunnable);
+            aisReconnectRunnable = null;
+        }
         if (aisClient != null) {
             aisClient.disconnect();
             aisClient = null;
@@ -852,7 +868,9 @@ public class AirSeaTool implements IPlugin,
     }
 
     private void startAirSync() {
-        if (adsbClient != null || rtlAdsbClient != null) return;
+        // Defensive: stop any existing client to prevent orphan threads
+        if (adsbClient != null) { adsbClient.stop(); adsbClient = null; }
+        if (rtlAdsbClient != null) { rtlAdsbClient.stop(); rtlAdsbClient = null; }
 
         int sourceIdx = airDataSourceSpinner.getSelectedItemPosition();
 
@@ -1052,11 +1070,13 @@ public class AirSeaTool implements IPlugin,
             updateStatus("Maritime: Reconnecting...");
             Log.d(TAG, "AIS auto-reconnecting...");
             aisClient = null;
-            mainHandler.postDelayed(() -> {
+            aisReconnectRunnable = () -> {
+                aisReconnectRunnable = null;
                 if (!syncing) return;
                 aisClient = new AisStreamClient(this);
                 aisClient.connect(lastApiKey, lastBoundingBox);
-            }, 3000);
+            };
+            mainHandler.postDelayed(aisReconnectRunnable, 3000);
         });
     }
 
