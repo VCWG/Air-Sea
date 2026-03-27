@@ -73,23 +73,43 @@
 
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="42dp"
+                        android:layout_height="36dp"
                         android:orientation="horizontal"
                         android:layout_marginTop="4dp">
 
-                        <Spinner
-                            android:id="@+id/data_source_spinner"
+                        <FrameLayout
                             android:layout_width="0dp"
-                            android:layout_height="42dp"
-                            android:layout_weight="1"
-                            android:spinnerMode="dropdown" />
+                            android:layout_height="36dp"
+                            android:layout_weight="1">
+
+                            <Spinner
+                                android:id="@+id/data_source_spinner"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:spinnerMode="dropdown"
+                                android:dropDownWidth="wrap_content"
+                                android:paddingLeft="0dp"
+                                android:paddingRight="0dp"
+                                android:background="@drawable/spinner_bg" />
+
+                            <ImageView
+                                android:layout_width="10dp"
+                                android:layout_height="6dp"
+                                android:layout_gravity="end|center_vertical"
+                                android:layout_marginEnd="6dp"
+                                android:src="@drawable/ic_spinner_arrow"
+                                android:clickable="false"
+                                android:focusable="false" />
+
+                        </FrameLayout>
 
                         <TextView
                             android:id="@+id/data_source_tooltip"
                             android:layout_width="22dp"
-                            android:layout_height="42dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center_vertical"
                             android:layout_marginLeft="8dp"
-                            android:background="@drawable/tooltip_circle_padded"
+                            android:background="@drawable/tooltip_circle"
                             android:gravity="center"
                             android:includeFontPadding="false"
                             android:text="?"
@@ -198,23 +218,43 @@
 
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="42dp"
+                        android:layout_height="36dp"
                         android:orientation="horizontal"
                         android:layout_marginTop="4dp">
 
-                        <Spinner
-                            android:id="@+id/air_data_source_spinner"
+                        <FrameLayout
                             android:layout_width="0dp"
-                            android:layout_height="42dp"
-                            android:layout_weight="1"
-                            android:spinnerMode="dropdown" />
+                            android:layout_height="36dp"
+                            android:layout_weight="1">
+
+                            <Spinner
+                                android:id="@+id/air_data_source_spinner"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:spinnerMode="dropdown"
+                                android:dropDownWidth="wrap_content"
+                                android:paddingLeft="0dp"
+                                android:paddingRight="0dp"
+                                android:background="@drawable/spinner_bg" />
+
+                            <ImageView
+                                android:layout_width="10dp"
+                                android:layout_height="6dp"
+                                android:layout_gravity="end|center_vertical"
+                                android:layout_marginEnd="6dp"
+                                android:src="@drawable/ic_spinner_arrow"
+                                android:clickable="false"
+                                android:focusable="false" />
+
+                        </FrameLayout>
 
                         <TextView
                             android:id="@+id/air_data_source_tooltip"
                             android:layout_width="22dp"
-                            android:layout_height="42dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center_vertical"
                             android:layout_marginLeft="8dp"
-                            android:background="@drawable/tooltip_circle_padded"
+                            android:background="@drawable/tooltip_circle"
                             android:gravity="center"
                             android:includeFontPadding="false"
                             android:text="?"
@@ -611,12 +651,31 @@
             android:textColor="@color/white"
             android:textSize="14sp" />
 
-        <Spinner
-            android:id="@+id/frequency_spinner"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="42dp"
-            android:layout_marginTop="4dp"
-            android:spinnerMode="dropdown" />
+            android:layout_height="36dp"
+            android:layout_marginTop="4dp">
+
+            <Spinner
+                android:id="@+id/frequency_spinner"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:spinnerMode="dropdown"
+                android:dropDownWidth="wrap_content"
+                android:paddingLeft="0dp"
+                android:paddingRight="0dp"
+                android:background="@drawable/spinner_bg" />
+
+            <ImageView
+                android:layout_width="10dp"
+                android:layout_height="6dp"
+                android:layout_gravity="end|center_vertical"
+                android:layout_marginEnd="6dp"
+                android:src="@drawable/ic_spinner_arrow"
+                android:clickable="false"
+                android:focusable="false" />
+
+        </FrameLayout>
 
     </LinearLayout>
 

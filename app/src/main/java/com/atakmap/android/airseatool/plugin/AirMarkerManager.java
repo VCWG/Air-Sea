@@ -25,16 +25,19 @@ public class AirMarkerManager {
 
     private static final String TAG = "AirMarkerManager";
     private static final String UID_PREFIX = "ADSB-";
-    private static final String COT_TYPE           = "a-n-A";
-    private static final String COT_TYPE_FIXED_WING = "a-n-A-C-F";
-    private static final String COT_TYPE_ROTARY     = "a-n-A-C-H";
-    private static final String COT_TYPE_LTA        = "a-n-A-C-L";
-    private static final String COT_TYPE_GROUND_VEH = "a-n-G-E-V-U";
+    private static final String COT_TYPE             = "a-n-A";
+    private static final String COT_TYPE_FIXED_WING  = "a-n-A-C-F";
+    private static final String COT_TYPE_ROTARY      = "a-n-A-C-H";
+    private static final String COT_TYPE_LTA         = "a-n-A-C-L";
+    private static final String COT_TYPE_GROUND_VEH  = "a-n-G-E-V-U";
+    private static final String COT_TYPE_MIL_FIXED   = "a-n-A-M-F";
+    private static final String COT_TYPE_MIL_ROTARY  = "a-n-A-M-H";
     private static final String GROUP_NAME = "ADS-B Aircraft";
     public  static final long DEFAULT_staleOffsetMs = 70 * 1000L;
     private volatile long staleOffsetMs = DEFAULT_staleOffsetMs;
 
     private volatile char affiliation = 'n';
+    private volatile IcaoDatabase icaoDatabase;
 
     private final Map<String, Long> lastUpdateTimes = new ConcurrentHashMap<>();
     private final Map<String, Marker> markers = new ConcurrentHashMap<>();
@@ -63,6 +66,10 @@ public class AirMarkerManager {
 
     public void setAffiliation(char affiliation) {
         this.affiliation = affiliation;
+    }
+
+    public void setIcaoDatabase(IcaoDatabase db) {
+        this.icaoDatabase = db;
     }
 
     /** Replace the affiliation character in a CoT type string (e.g. "a-n-A-C-F" → "a-f-A-C-F"). */
@@ -123,8 +130,9 @@ public class AirMarkerManager {
         if (group == null) return;
 
         try {
+            IcaoRecord icaoRec = (icaoDatabase != null) ? icaoDatabase.lookup(a.icao24) : null;
             String displayName = resolveDisplayName(a);
-            String remarks = buildRemarks(a);
+            String remarks = buildRemarks(a, icaoRec);
             double speedMps = a.groundSpeedKnots * 0.514444;
             // Use UNKNOWN altitude for on-ground aircraft so ATAK doesn't
             // falsely place them at sea level. For airborne, convert
@@ -149,7 +157,7 @@ public class AirMarkerManager {
             }
 
             // Use user override if set, otherwise auto-categorize
-            String cotType = resolveEffectiveType(resolveCotType(a), uid);
+            String cotType = resolveEffectiveType(resolveCotType(a, icaoRec), uid);
 
             if (marker == null) {
                 marker = createMarker(point, uid, cotType, style, displayName,
@@ -229,7 +237,21 @@ public class AirMarkerManager {
         return autoType;
     }
 
-    private String resolveCotType(Aircraft a) {
+    private String resolveCotType(Aircraft a, IcaoRecord icaoRec) {
+        if (icaoRec != null && icaoRec.mil) {
+            // Military aircraft: classify by SHORT_TYPE first character.
+            // L=Landplane, S=Seaplane, A=Amphibian → fixed wing
+            // G=Gyroplane, H=Helicopter, R=Rotorcraft, T=Tiltrotor → rotary wing
+            String st = icaoRec.shortType;
+            if (!st.isEmpty()) {
+                char first = Character.toUpperCase(st.charAt(0));
+                if (first == 'L' || first == 'S' || first == 'A') {
+                    return applyAffiliation(COT_TYPE_MIL_FIXED);
+                } else if (first == 'G' || first == 'H' || first == 'R' || first == 'T') {
+                    return applyAffiliation(COT_TYPE_MIL_ROTARY);
+                }
+            }
+        }
         return applyAffiliation(resolveBaseCotType(a));
     }
 
@@ -263,13 +285,17 @@ public class AirMarkerManager {
         return a.icao24.toUpperCase();
     }
 
-    private static String buildRemarks(Aircraft a) {
+    private static String buildRemarks(Aircraft a, IcaoRecord icaoRec) {
         StringBuilder sb = new StringBuilder();
         sb.append("ICAO24: ").append(a.icao24.toUpperCase());
         if (!a.callsign.isEmpty())
             sb.append("\nFlight: ").append(a.callsign);
         if (!a.registration.isEmpty())
             sb.append("\nReg: ").append(a.registration);
+        if (icaoRec != null && !icaoRec.model.isEmpty())
+            sb.append("\nModel: ").append(icaoRec.model);
+        if (icaoRec != null && !icaoRec.ownop.isEmpty())
+            sb.append("\nOperator: ").append(icaoRec.ownop);
         if (!a.aircraftType.isEmpty())
             sb.append("\nType: ").append(a.aircraftType);
         if (a.altitudeFt > 0)

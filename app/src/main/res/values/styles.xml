@@ -10,6 +10,13 @@
         <item name="android:spinnerItemStyle">@style/ATAKSpinnerItem</item>
         <item name="android:spinnerDropDownItemStyle">@style/ATAKSpinnerDropDownItem</item>
         <item name="android:editTextStyle">@style/ATAKEditText</item>
+        <item name="android:dropDownListViewStyle">@style/AlwaysScrollDropDownList</item>
+    </style>
+
+    <!-- Dropdown list with always-visible scrollbar so users know more items exist -->
+    <style name="AlwaysScrollDropDownList" parent="@android:style/Widget.ListView.DropDown">
+        <item name="android:fadeScrollbars">false</item>
+        <item name="android:scrollbarAlwaysDrawVerticalTrack">true</item>
     </style>
 
 

@@ -5,19 +5,33 @@
 
 package com.atakmap.android.airseatool.plugin;
 
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
 import android.content.Context;
 import android.os.Bundle;
 import android.preference.EditTextPreference;
 import android.preference.ListPreference;
+import android.preference.Preference;
 import android.preference.PreferenceScreen;
 import android.text.InputType;
+import android.widget.Toast;
 
 import com.atakmap.android.preference.PluginPreferenceFragment;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
 public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
 
-    public AirSeaPreferenceFragment(Context pluginContext) {
+    private final IcaoDatabase icaoDatabase;
+    // Held as fields so lambdas defined before the other pref is created can still reference them
+    private Preference icaoUpdatePref;
+    private Preference icaoDeletePref;
+
+    public AirSeaPreferenceFragment(Context pluginContext, IcaoDatabase icaoDatabase) {
         super(pluginContext, R.xml.airsea_preferences);
+        this.icaoDatabase = icaoDatabase;
     }
 
     @Override
@@ -114,6 +128,84 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
         });
         screen.addPreference(shipStalePref);
 
+        // ── ICAO Database / Military Affiliation ─────────────────────────
+        icaoUpdatePref = new Preference(getActivity());
+        icaoUpdatePref.setTitle("ICAO Database / Military Affiliation");
+        updateIcaoDbSummary(icaoUpdatePref, icaoDatabase);
+        icaoUpdatePref.setOnPreferenceClickListener(pref -> {
+            if (icaoDatabase == null) return true;
+            if (icaoDatabase.isDownloading()) {
+                Toast.makeText(getActivity(), "Database update already in progress",
+                        Toast.LENGTH_SHORT).show();
+                return true;
+            }
+            // Show progress dialog
+            ProgressDialog pd = new ProgressDialog(getActivity());
+            pd.setTitle("ICAO Database Update");
+            pd.setMessage("Connecting\u2026");
+            pd.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+            pd.setMax(100);
+            pd.setProgress(0);
+            pd.setIndeterminate(false);
+            pd.setCancelable(false);
+            pd.show();
+
+            icaoDatabase.downloadAndUpdate(
+                (success, msg) -> {
+                    android.app.Activity act = getActivity();
+                    if (act == null || act.isFinishing()) return;
+                    act.runOnUiThread(() -> {
+                        pd.dismiss();
+                        if (getActivity() == null) return;
+                        updateIcaoDbSummary(icaoUpdatePref, icaoDatabase);
+                        updateIcaoDeleteSummary(icaoDeletePref, icaoDatabase);
+                        Toast.makeText(act,
+                                success ? "ICAO database updated" : "Update failed: " + msg,
+                                Toast.LENGTH_LONG).show();
+                    });
+                },
+                (stage, percent) -> {
+                    android.app.Activity act = getActivity();
+                    if (act == null || act.isFinishing()) return;
+                    act.runOnUiThread(() -> {
+                        if (percent >= 0) {
+                            pd.setIndeterminate(false);
+                            pd.setProgress(percent);
+                        } else {
+                            pd.setIndeterminate(true);
+                        }
+                        pd.setMessage(stage);
+                    });
+                }
+            );
+            return true;
+        });
+        screen.addPreference(icaoUpdatePref);
+
+        // ── Delete ICAO Database ──────────────────────────────────────────
+        icaoDeletePref = new Preference(getActivity());
+        icaoDeletePref.setTitle("Delete ICAO Database");
+        updateIcaoDeleteSummary(icaoDeletePref, icaoDatabase);
+        icaoDeletePref.setOnPreferenceClickListener(pref -> {
+            if (icaoDatabase == null || !icaoDatabase.isFilePresent()) return true;
+            new AlertDialog.Builder(getActivity())
+                    .setTitle("Delete ICAO Database")
+                    .setMessage("Remove the local ICAO database file? Military type "
+                            + "identification and operator information will be unavailable "
+                            + "until the database is re-downloaded.")
+                    .setPositiveButton("Delete", (dialog, which) -> {
+                        icaoDatabase.deleteDatabase();
+                        updateIcaoDbSummary(icaoUpdatePref, icaoDatabase);
+                        updateIcaoDeleteSummary(icaoDeletePref, icaoDatabase);
+                        Toast.makeText(getActivity(), "ICAO database deleted",
+                                Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            return true;
+        });
+        screen.addPreference(icaoDeletePref);
+
         // Commit screen — after this, getValue()/getText() return saved or default values
         setPreferenceScreen(screen);
 
@@ -123,6 +215,33 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
         setRangeSummary(rangePref, rangePref.getText());
         setStaleSummary(airStalePref, airStalePref.getText(), "s");
         setStaleSummary(shipStalePref, shipStalePref.getText(), "s");
+        updateIcaoDeleteSummary(icaoDeletePref, icaoDatabase);
+    }
+
+    private static void updateIcaoDbSummary(Preference pref, IcaoDatabase db) {
+        if (pref == null) return;
+        if (db == null || !db.isFilePresent()) {
+            pref.setSummary("Not downloaded — tap to download");
+            return;
+        }
+        long ts = db.getLastUpdatedMs();
+        if (ts == 0) {
+            pref.setSummary("Not downloaded — tap to download");
+        } else {
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+            pref.setSummary("Last updated: " + sdf.format(new Date(ts)) + " — tap to update");
+        }
+    }
+
+    private static void updateIcaoDeleteSummary(Preference pref, IcaoDatabase db) {
+        if (pref == null) return;
+        if (db == null || !db.isFilePresent()) {
+            pref.setSummary("No database file present");
+            pref.setEnabled(false);
+        } else {
+            pref.setSummary("Tap to remove local database file");
+            pref.setEnabled(true);
+        }
     }
 
     private static void setListSummary(ListPreference pref, String value,

@@ -73,7 +73,7 @@ public class AirSeaTool implements IPlugin,
 
     // Air prefs
     private static final String PREF_AIR_ENABLED           = "air_enabled";
-    private static final String PREF_AIR_API_KEY            = "air_api_key_";  // + index suffix (sources 0-2)
+    private static final String PREF_AIR_API_KEY            = "air_api_key_";  // + index suffix (sources 0-3)
     private static final String PREF_AIR_SOURCE_INDEX       = "air_source_index";
     private static final String PREF_AIR_BROADCAST_ALL      = "air_broadcast_all";
     private static final String PREF_OPENSKY_CLIENT_ID      = "opensky_client_id";
@@ -86,11 +86,11 @@ public class AirSeaTool implements IPlugin,
     };
     private static final int DEFAULT_FREQUENCY_INDEX = 3; // 30 seconds
 
-    // Index 0 = RTL-SDR; 1-4 = network sources (air spinner only)
+    // Index 0 = RTL-SDR; 1-5 = network sources (air spinner only)
     private static final String[] MARITIME_SOURCE_LABELS =
             {"aisstream.io"};
     private static final String[] AIR_SOURCE_LABELS =
-            {"USB: RTL-SDR", "adsb.fi", "airplanes.live", "adsb.lol", "OpenSky"};
+            {"USB: RTL-SDR", "ADS-B Exchange", "adsb.fi", "airplanes.live", "adsb.lol", "OpenSky"};
 
     private final android.content.Context pluginContext;
     private final IHostUIService uiService;
@@ -109,9 +109,12 @@ public class AirSeaTool implements IPlugin,
     private AdsbStreamClient adsbClient;
     private RtlSdrAdsbClient rtlAdsbClient;
     private final AirMarkerManager airMarkerManager;
-    private final String[] airApiKeys = new String[]{"", "", ""};  // network sources 1-3
+    private final String[] airApiKeys = new String[]{"", "", "", ""};  // network sources 1-4
     private String openSkyClientId = "";
     private String openSkyClientSecret = "";
+
+    // ICAO aircraft database (military flag, model, owner/operator, short type)
+    private IcaoDatabase icaoDatabase;
 
     // Maritime RTL-SDR client
     private RtlSdrAisClient rtlAisClient;
@@ -206,23 +209,34 @@ public class AirSeaTool implements IPlugin,
 
     @Override
     public void onStart() {
+        // Initialise ICAO database (requires MapView context for storage directory)
+        MapView mv = MapView.getMapView();
+        if (mv != null) {
+            java.io.File dbDir = mv.getContext().getDir("airsea", android.content.Context.MODE_PRIVATE);
+            icaoDatabase = new IcaoDatabase(dbDir);
+            airMarkerManager.setIcaoDatabase(icaoDatabase);
+            if (!icaoDatabase.isFilePresent()) {
+                Log.i(TAG, "ICAO database not present — initiating first-time download");
+                icaoDatabase.downloadAndUpdate((success, msg) ->
+                        Log.i(TAG, "ICAO DB first-time download: "
+                                + (success ? "OK (" + msg + ")" : "failed: " + msg)));
+            } else {
+                icaoDatabase.loadAsync();
+            }
+            applyGlobalPreferences();
+            PreferenceManager.getDefaultSharedPreferences(mv.getContext())
+                    .registerOnSharedPreferenceChangeListener(globalPrefListener);
+        }
+
         if (uiService != null) uiService.addToolbarItem(toolbarItem);
 
         // Register in Specific Tool Preferences
         ToolsPreferenceFragment.register(new ToolsPreferenceFragment.ToolPreference(
                 "Air+Sea",
-                "Default track affiliation, RTL-SDR gain and range",
+                "Default track affiliation, RTL-SDR gain, range, and ICAO database",
                 "com.atakmap.android.airseatool",
                 pluginContext.getResources().getDrawable(R.drawable.ic_launcher),
-                new AirSeaPreferenceFragment(pluginContext)));
-
-        // Apply saved global prefs and watch for changes
-        MapView mv = MapView.getMapView();
-        if (mv != null) {
-            applyGlobalPreferences();
-            PreferenceManager.getDefaultSharedPreferences(mv.getContext())
-                    .registerOnSharedPreferenceChangeListener(globalPrefListener);
-        }
+                new AirSeaPreferenceFragment(pluginContext, icaoDatabase)));
     }
 
     @Override
@@ -237,6 +251,9 @@ public class AirSeaTool implements IPlugin,
             PreferenceManager.getDefaultSharedPreferences(mv.getContext())
                     .unregisterOnSharedPreferenceChangeListener(globalPrefListener);
         }
+
+        airMarkerManager.setIcaoDatabase(null);
+        icaoDatabase = null;
 
         // Invalidate pane so it is recreated fresh on next onStart/showPane
         pane = null;
@@ -428,6 +445,8 @@ public class AirSeaTool implements IPlugin,
                         + "antenna. User must install the \"RTL-SDR Driver\" app "
                         + "(free, Play Store) from Signalware. Disable battery "
                         + "optimization for the driver app.\n\n"
+                        + "ADS-B Exchange data is provided through RapidAPI. "
+                        + "A valid API key is required.\n\n"
                         + "adsb.fi, airplanes.live, and adsb.lol provide "
                         + "free real-time ADS-B aircraft positions — no API "
                         + "key required.\n\nOpenSky provides limited requests "
@@ -464,7 +483,7 @@ public class AirSeaTool implements IPlugin,
         if (syncing) return;
         int idx = airDataSourceSpinner != null
                 ? airDataSourceSpinner.getSelectedItemPosition() : 0;
-        // spinner 1-3 → airApiKeys 0-2
+        // spinner 1-4 → airApiKeys 0-3
         int keyIdx = idx - 1;
         if (keyIdx < 0 || keyIdx >= airApiKeys.length) return;
         String current = airApiKeys[keyIdx] != null ? airApiKeys[keyIdx] : "";
@@ -538,9 +557,9 @@ public class AirSeaTool implements IPlugin,
     private void updateAirCredentialFields() {
         int idx = airDataSourceSpinner != null
                 ? airDataSourceSpinner.getSelectedItemPosition() : 0;
-        // idx 0 = RTL-SDR, idx 4 = OpenSky
+        // idx 0 = RTL-SDR, idx 1 = ADS-B Exchange, idx 2-4 = free sources, idx 5 = OpenSky
         boolean isRtlSdr  = (idx == 0);
-        boolean isOpenSky = (idx == 4);
+        boolean isOpenSky = (idx == 5);
 
         if (airApiKeySection != null)
             airApiKeySection.setVisibility(
@@ -548,10 +567,17 @@ public class AirSeaTool implements IPlugin,
         if (openSkySection != null)
             openSkySection.setVisibility(isOpenSky ? View.VISIBLE : View.GONE);
 
-        if (!isRtlSdr && !isOpenSky && idx >= 1 && idx <= 3) {
-            int keyIdx = idx - 1;  // airApiKeys[0..2] for spinner positions 1..3
+        if (!isRtlSdr && !isOpenSky && idx >= 1 && idx <= 4) {
+            int keyIdx = idx - 1;  // airApiKeys[0..3] for spinner positions 1..4
             String key = (airApiKeys[keyIdx] != null) ? airApiKeys[keyIdx] : "";
             updateKeyDisplay(airApiKeyDisplay, key);
+            // Show "Required" hint for ADS-B Exchange (idx 1) when no key entered;
+            // "Not required" for optional-key sources (idx 2-4)
+            if (airApiKeyDisplay != null) {
+                airApiKeyDisplay.setHint(
+                        (idx == 1 && key.isEmpty()) ? "Required"
+                        : (idx != 1 && key.isEmpty()) ? "Not required" : "");
+            }
         } else if (isOpenSky) {
             updateKeyDisplay(openSkyClientIdDisplay, openSkyClientId);
             updateKeyDisplay(openSkyClientSecretDisplay, openSkyClientSecret);
@@ -813,6 +839,14 @@ public class AirSeaTool implements IPlugin,
 
         savePreferences();
 
+        // If the ICAO database has never been downloaded, kick off a silent download now
+        if (icaoDatabase != null && !icaoDatabase.isFilePresent() && !icaoDatabase.isDownloading()) {
+            Log.i(TAG, "ICAO database absent at sync start — initiating background download");
+            icaoDatabase.downloadAndUpdate((success, msg) ->
+                    Log.i(TAG, "ICAO DB sync-triggered download: "
+                            + (success ? "OK (" + msg + ")" : "failed: " + msg)));
+        }
+
         int freqSeconds = FREQUENCY_VALUES[frequencySpinner.getSelectedItemPosition()];
         shipMarkerManager.setUpdateFrequency(freqSeconds);
         airMarkerManager.setUpdateFrequency(freqSeconds);
@@ -884,17 +918,17 @@ public class AirSeaTool implements IPlugin,
             return;
         }
 
-        // Network source: spinner 1-4 → sources adsb.fi, airplanes.live, adsb.lol, OpenSky
+        // Network source: spinner 1-5 → ADS-B Exchange, adsb.fi, airplanes.live, adsb.lol, OpenSky
         AdsbSource source = createAirSource(sourceIdx);
         adsbClient = new AdsbStreamClient(source, this);
 
         String cred1, cred2;
-        if (sourceIdx == 4) {
+        if (sourceIdx == 5) {
             // OpenSky: OAuth2 client credentials
             cred1 = openSkyClientId;
             cred2 = openSkyClientSecret;
         } else {
-            // airApiKeys[0..2] for spinner positions 1..3
+            // airApiKeys[0..3] for spinner positions 1..4
             int keyIdx = sourceIdx - 1;
             cred1 = (keyIdx >= 0 && keyIdx < airApiKeys.length && airApiKeys[keyIdx] != null)
                     ? airApiKeys[keyIdx] : "";
@@ -925,11 +959,12 @@ public class AirSeaTool implements IPlugin,
     }
 
     private AdsbSource createAirSource(int spinnerIndex) {
-        // spinnerIndex: 1=adsb.fi, 2=airplanes.live, 3=adsb.lol, 4=OpenSky
+        // spinnerIndex: 1=ADS-B Exchange, 2=adsb.fi, 3=airplanes.live, 4=adsb.lol, 5=OpenSky
         switch (spinnerIndex) {
-            case 2: return new AirplanesLiveSource();
-            case 3: return new AdsbLolSource();
-            case 4: return new OpenSkySource();
+            case 1: return new AdsbExchangeSource();
+            case 3: return new AirplanesLiveSource();
+            case 4: return new AdsbLolSource();
+            case 5: return new OpenSkySource();
             default: return new AdsbFiSource();
         }
     }
