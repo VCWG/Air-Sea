@@ -68,8 +68,10 @@ public class AirSeaTool implements IPlugin,
     private static final String PREF_MAX_LAT            = "max_lat";
     private static final String PREF_MIN_LON            = "min_lon";
     private static final String PREF_MAX_LON            = "max_lon";
-    private static final String PREF_FREQUENCY_INDEX    = "frequency_index";
-    private static final String PREF_BROADCAST_ALL      = "broadcast_all";
+    private static final String PREF_FREQUENCY_INDEX        = "frequency_index";
+    private static final String PREF_BROADCAST_ALL          = "broadcast_all";
+    private static final String PREF_MARITIME_SOURCE_INDEX  = "maritime_source_index";
+    private static final String PREF_VF_API_KEY             = "vf_api_key";
 
     // Air prefs
     private static final String PREF_AIR_ENABLED           = "air_enabled";
@@ -88,7 +90,7 @@ public class AirSeaTool implements IPlugin,
 
     // Index 0 = RTL-SDR; 1-5 = network sources (air spinner only)
     private static final String[] MARITIME_SOURCE_LABELS =
-            {"aisstream.io"};
+            {"aisstream.io" /*, "VesselFinder" — disabled pending subscription key */};
     private static final String[] AIR_SOURCE_LABELS =
             {"USB: RTL-SDR", "ADS-B Exchange", "adsb.fi", "airplanes.live", "adsb.lol", "OpenSky"};
 
@@ -100,8 +102,10 @@ public class AirSeaTool implements IPlugin,
 
     // Maritime
     private AisStreamClient aisClient;
+    private VesselFinderClient vesselFinderClient;
     private final ShipMarkerManager shipMarkerManager;
     private String apiKey = "";
+    private String vesselFinderApiKey = "";
     private String lastApiKey;
     private double[][] lastBoundingBox;
 
@@ -473,10 +477,18 @@ public class AirSeaTool implements IPlugin,
 
     private void showApiKeyDialog() {
         if (syncing) return;
-        showKeyDialog("Enter Maritime API Key", apiKey, key -> {
-            apiKey = key;
-            updateApiKeyDisplay();
-        });
+        int idx = dataSourceSpinner != null ? dataSourceSpinner.getSelectedItemPosition() : 0;
+        if (idx == 1) {
+            showKeyDialog("Enter VesselFinder API Key", vesselFinderApiKey, key -> {
+                vesselFinderApiKey = key;
+                updateMaritimeApiKeySection();
+            });
+        } else {
+            showKeyDialog("Enter Maritime API Key", apiKey, key -> {
+                apiKey = key;
+                updateMaritimeApiKeySection();
+            });
+        }
     }
 
     private void showAirApiKeyDialog() {
@@ -544,13 +556,26 @@ public class AirSeaTool implements IPlugin,
     }
 
     private void updateApiKeyDisplay() {
-        updateKeyDisplay(apiKeyDisplay, apiKey);
+        updateMaritimeApiKeySection();
     }
 
-    /** Show/hide the maritime API key section based on spinner selection. */
+    /** Show/hide the maritime API key section and update key display + hint. */
     private void updateMaritimeApiKeySection() {
         if (maritimeApiKeySection != null)
             maritimeApiKeySection.setVisibility(View.VISIBLE);
+        int idx = dataSourceSpinner != null ? dataSourceSpinner.getSelectedItemPosition() : 0;
+        if (idx == 1) {
+            // VesselFinder
+            String key = vesselFinderApiKey != null ? vesselFinderApiKey : "";
+            updateKeyDisplay(apiKeyDisplay, key);
+            if (apiKeyDisplay != null)
+                apiKeyDisplay.setHint(key.isEmpty() ? "Required" : "");
+        } else {
+            // aisstream.io
+            updateKeyDisplay(apiKeyDisplay, apiKey);
+            if (apiKeyDisplay != null)
+                apiKeyDisplay.setHint(apiKey.isEmpty() ? "Tap to enter API key" : "");
+        }
         updateRtlTcpSection();
     }
 
@@ -676,6 +701,12 @@ public class AirSeaTool implements IPlugin,
             maritimeContent.setVisibility(maritimeEnabled ? View.VISIBLE : View.GONE);
 
         apiKey = prefs.getString(PREF_API_KEY, "");
+        vesselFinderApiKey = prefs.getString(PREF_VF_API_KEY, "");
+
+        int maritimeSourceIndex = prefs.getInt(PREF_MARITIME_SOURCE_INDEX, 0);
+        if (maritimeSourceIndex >= 0 && maritimeSourceIndex < MARITIME_SOURCE_LABELS.length)
+            dataSourceSpinner.setSelection(maritimeSourceIndex);
+
         minLatInput.setText(prefs.getString(PREF_MIN_LAT, ""));
         maxLatInput.setText(prefs.getString(PREF_MAX_LAT, ""));
         minLonInput.setText(prefs.getString(PREF_MIN_LON, ""));
@@ -722,6 +753,9 @@ public class AirSeaTool implements IPlugin,
                 .putBoolean(PREF_MARITIME_ENABLED,
                         maritimeEnableCheckbox.isChecked())
                 .putString(PREF_API_KEY, apiKey)
+                .putString(PREF_VF_API_KEY, vesselFinderApiKey)
+                .putInt(PREF_MARITIME_SOURCE_INDEX,
+                        dataSourceSpinner.getSelectedItemPosition())
                 .putString(PREF_MIN_LAT,
                         minLatInput.getText().toString().trim())
                 .putString(PREF_MAX_LAT,
@@ -869,19 +903,60 @@ public class AirSeaTool implements IPlugin,
     }
 
     private void startMaritimeSync() {
-        // Defensive: stop any existing client to prevent orphan connections
+        // Defensive: stop any existing clients to prevent orphan connections
         if (aisClient != null) { aisClient.disconnect(); aisClient = null; }
         if (rtlAisClient != null) { rtlAisClient.disconnect(); rtlAisClient = null; }
+        if (vesselFinderClient != null) { vesselFinderClient.stop(); vesselFinderClient = null; }
 
-        // aisstream.io
-        if (apiKey == null || apiKey.isEmpty()) {
-            updateStatus("Maritime: API Key required.");
-            return;
+        int sourceIdx = dataSourceSpinner != null
+                ? dataSourceSpinner.getSelectedItemPosition() : 0;
+
+        if (sourceIdx == 1) {
+            // VesselFinder
+            if (vesselFinderApiKey == null || vesselFinderApiKey.isEmpty()) {
+                updateStatus("Maritime: API Key required.");
+                return;
+            }
+            lastApiKey = null; // prevent aisstream.io auto-reconnect from firing
+            int freqSeconds = FREQUENCY_VALUES[frequencySpinner.getSelectedItemPosition()];
+            vesselFinderClient = new VesselFinderClient(new VesselFinderClient.Listener() {
+                @Override
+                public void onConnected() {
+                    updateStatus("Maritime: Connected — waiting for data...");
+                }
+                @Override
+                public void onShipPosition(int mmsi, String name, double lat, double lon,
+                        double cog, double sog, int trueHeading, int navStatus,
+                        int shipType, double draught, String destination, String eta,
+                        int imoNumber) {
+                    shipMarkerManager.updateShip(mmsi, name, lat, lon, cog, sog,
+                            0, trueHeading, navStatus, shipType, draught,
+                            destination, eta, imoNumber);
+                }
+                @Override
+                public void onPollComplete(int count) {
+                    updateStatus("Maritime: Tracking "
+                            + shipMarkerManager.getShipCount() + " ships");
+                }
+                @Override
+                public void onError(String error) {
+                    Log.e(TAG, "VesselFinder error: " + error);
+                    updateStatus("Maritime: Error — " + error);
+                }
+            });
+            vesselFinderClient.start(vesselFinderApiKey, freqSeconds);
+            updateStatus("Maritime: Connecting...");
+        } else {
+            // aisstream.io (sourceIdx == 0)
+            if (apiKey == null || apiKey.isEmpty()) {
+                updateStatus("Maritime: API Key required.");
+                return;
+            }
+            lastApiKey = apiKey;
+            aisClient = new AisStreamClient(this);
+            aisClient.connect(lastApiKey, lastBoundingBox);
+            updateStatus("Maritime: Connecting...");
         }
-        lastApiKey = apiKey;
-        aisClient = new AisStreamClient(this);
-        aisClient.connect(lastApiKey, lastBoundingBox);
-        updateStatus("Maritime: Connecting...");
     }
 
     private void stopMaritimeSync() {
@@ -896,6 +971,10 @@ public class AirSeaTool implements IPlugin,
         if (rtlAisClient != null) {
             rtlAisClient.disconnect();
             rtlAisClient = null;
+        }
+        if (vesselFinderClient != null) {
+            vesselFinderClient.stop();
+            vesselFinderClient = null;
         }
         shipMarkerManager.removeAllMarkers();
         updateStatus(null);
