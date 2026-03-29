@@ -215,7 +215,7 @@ public class IcaoDatabase {
         activeConn = conn;
         conn.setConnectTimeout(30_000);
         conn.setReadTimeout(300_000);  // large file; allow 5 min
-        conn.setRequestProperty("User-Agent", "AirSeaTool/1.1.0");
+        conn.setRequestProperty("User-Agent", "AirSeaTool/1.2.0");
         try {
             int code = conn.getResponseCode();
             if (cancelled) throw new Exception("Download cancelled");
