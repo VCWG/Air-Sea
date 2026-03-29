@@ -64,6 +64,10 @@ public class IcaoDatabase {
     private volatile Map<String, IcaoRecord> records = null;
     /** True while a background download+parse is in progress. */
     private volatile boolean downloading = false;
+    /** Set to true by cancelDownload() to abort an in-progress operation. */
+    private volatile boolean cancelled = false;
+    /** The active HTTP connection, held so cancelDownload() can disconnect it. */
+    private volatile HttpURLConnection activeConn = null;
 
     public IcaoDatabase(File dbDir) {
         this.dbDir = dbDir;
@@ -94,6 +98,13 @@ public class IcaoDatabase {
     /** True while a download is already running — callers should not start another. */
     public boolean isDownloading() {
         return downloading;
+    }
+
+    /** Cancels an in-progress download. The update callback will be called with success=false. */
+    public void cancelDownload() {
+        cancelled = true;
+        HttpURLConnection conn = activeConn;
+        if (conn != null) conn.disconnect();
     }
 
     /** Last-modified timestamp of the local TSV file, or 0 if not present. */
@@ -130,6 +141,7 @@ public class IcaoDatabase {
             return;
         }
         downloading = true;
+        cancelled = false;
         new Thread(() -> {
             try {
                 int count = downloadAndProcess(progress);
@@ -200,11 +212,13 @@ public class IcaoDatabase {
         if (progress != null) progress.onProgress("Connecting\u2026", 0);
         URL url = new URL(DB_URL);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        activeConn = conn;
         conn.setConnectTimeout(30_000);
         conn.setReadTimeout(300_000);  // large file; allow 5 min
         conn.setRequestProperty("User-Agent", "AirSeaTool/1.1.0");
         try {
             int code = conn.getResponseCode();
+            if (cancelled) throw new Exception("Download cancelled");
             if (code != 200)
                 throw new Exception("HTTP " + code + " from ICAO database server");
             long totalBytes = conn.getContentLengthLong();
@@ -215,6 +229,7 @@ public class IcaoDatabase {
                 long readBytes = 0;
                 int lastPct = -1;
                 while ((n = in.read(buf)) >= 0) {
+                    if (cancelled) throw new Exception("Download cancelled");
                     fos.write(buf, 0, n);
                     readBytes += n;
                     if (progress != null && totalBytes > 0) {
@@ -228,6 +243,7 @@ public class IcaoDatabase {
             }
         } finally {
             conn.disconnect();
+            activeConn = null;
         }
         Log.i(TAG, "ICAO DB: download complete (" + dlFile.length() + " bytes compressed)");
         if (progress != null) progress.onProgress("Parsing records\u2026", -1);
@@ -249,6 +265,7 @@ public class IcaoDatabase {
                 // JSON array: [{icao:..., mil:..., ...}, ...]
                 reader.beginArray();
                 while (reader.hasNext()) {
+                    if (cancelled) throw new Exception("Download cancelled");
                     if (reader.peek() != JsonToken.BEGIN_OBJECT) { reader.skipValue(); continue; }
                     String[] h = {null};
                     IcaoRecord rec = parseRecord(reader, h);
@@ -262,6 +279,7 @@ public class IcaoDatabase {
                 // JSONL or single keyed-object: consume top-level tokens until EOF.
                 // Each BEGIN_OBJECT is treated as one aircraft record containing an "icao" field.
                 while (reader.peek() != JsonToken.END_DOCUMENT) {
+                    if (cancelled) throw new Exception("Download cancelled");
                     JsonToken tok = reader.peek();
                     if (tok != JsonToken.BEGIN_OBJECT) { reader.skipValue(); continue; }
                     String[] h = {null};

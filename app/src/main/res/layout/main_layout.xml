@@ -165,6 +165,18 @@
                         android:buttonTint="#4A90D9"
                         android:saveEnabled="false" />
 
+                    <CheckBox
+                        android:id="@+id/maritime_military_only_checkbox"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="0dp"
+                        android:text="Military Only"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp"
+                        android:buttonTint="#4A90D9"
+                        android:saveEnabled="false" />
+
                 </LinearLayout>
 
                 <!-- Divider between sections -->
@@ -361,6 +373,18 @@
                         android:layout_marginTop="4dp"
                         android:layout_marginBottom="0dp"
                         android:text="Broadcast All"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp"
+                        android:buttonTint="#4A90D9"
+                        android:saveEnabled="false" />
+
+                    <CheckBox
+                        android:id="@+id/air_military_only_checkbox"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="0dp"
+                        android:text="Military Only"
                         android:textColor="#FFFFFF"
                         android:textSize="16sp"
                         android:buttonTint="#4A90D9"

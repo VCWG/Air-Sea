@@ -17,6 +17,7 @@ import com.atakmap.coremap.log.Log;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 import com.atakmap.coremap.maps.time.CoordinatedTime;
 
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -56,6 +57,7 @@ public class ShipMarkerManager {
     private MapGroup aisGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
+    private volatile boolean militaryOnly = false;
 
     public ShipMarkerManager(int updateFrequencySeconds) {
         this.updateFrequencyMs = updateFrequencySeconds * 1000L;
@@ -86,6 +88,34 @@ public class ShipMarkerManager {
         if (broadcast) {
             broadcastAllExisting();
         }
+    }
+
+    public void setMilitaryOnly(boolean militaryOnly) {
+        this.militaryOnly = militaryOnly;
+        if (militaryOnly) {
+            // Evict any currently-displayed ships that are not military type
+            Iterator<Map.Entry<Integer, Integer>> it = lastShipTypes.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<Integer, Integer> entry = it.next();
+                if (!isMilitaryShipType(entry.getValue())) {
+                    int mmsi = entry.getKey();
+                    String uid = UID_PREFIX + mmsi;
+                    Marker m = markers.remove(uid);
+                    if (m != null) {
+                        MapGroup parent = m.getGroup();
+                        if (parent != null) parent.removeItem(m);
+                    }
+                    lastSetTypes.remove(uid);
+                    userTypeOverrides.remove(uid);
+                    lastUpdateTimes.remove(mmsi);
+                    it.remove();
+                }
+            }
+        }
+    }
+
+    private static boolean isMilitaryShipType(int shipType) {
+        return shipType == 35 || shipType == 51 || shipType == 55;
     }
 
     public int getShipCount() {
@@ -128,6 +158,15 @@ public class ShipMarkerManager {
         }
         lastShipTypes.put(mmsi, shipType);
         lastUpdateTimes.put(mmsi, now);
+
+        if (militaryOnly) {
+            if (isMilitaryShipType(shipType)) {
+                Log.d(TAG, "MilFilter PASS  mmsi=" + mmsi + " type=" + shipType);
+            } else {
+                Log.d(TAG, "MilFilter BLOCK mmsi=" + mmsi + " type=" + shipType);
+                return;
+            }
+        }
 
         String uid = UID_PREFIX + mmsi;
         MapGroup group = getOrCreateGroup();

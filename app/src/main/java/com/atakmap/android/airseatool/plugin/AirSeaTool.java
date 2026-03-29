@@ -72,6 +72,8 @@ public class AirSeaTool implements IPlugin,
     private static final String PREF_BROADCAST_ALL          = "broadcast_all";
     private static final String PREF_MARITIME_SOURCE_INDEX  = "maritime_source_index";
     private static final String PREF_VF_API_KEY             = "vf_api_key";
+    private static final String PREF_MARITIME_MILITARY_ONLY = "maritime_military_only";
+    private static final String PREF_AIR_MILITARY_ONLY      = "air_military_only";
 
     // Air prefs
     private static final String PREF_AIR_ENABLED           = "air_enabled";
@@ -81,6 +83,7 @@ public class AirSeaTool implements IPlugin,
     private static final String PREF_OPENSKY_CLIENT_ID      = "opensky_client_id";
     private static final String PREF_OPENSKY_CLIENT_SECRET  = "opensky_client_secret";
     private static final String PREF_RTL_TCP_PORT           = "rtl_tcp_port";
+    private static final String PREF_ICAO_AUTO_DOWNLOAD_DONE = "icao_auto_download_done";
 
     private static final int[] FREQUENCY_VALUES = {1, 5, 10, 30, 60};
     private static final String[] FREQUENCY_LABELS = {
@@ -150,6 +153,7 @@ public class AirSeaTool implements IPlugin,
     private CheckBox maritimeEnableCheckbox;
     private TextView apiKeyDisplay;
     private CheckBox broadcastCheckbox;
+    private CheckBox maritimeMilitaryOnlyCheckbox;
     private Spinner dataSourceSpinner;
 
     // Air views
@@ -161,6 +165,7 @@ public class AirSeaTool implements IPlugin,
     private TextView openSkyClientIdDisplay;
     private TextView openSkyClientSecretDisplay;
     private CheckBox airBroadcastCheckbox;
+    private CheckBox airMilitaryOnlyCheckbox;
 
     // Maritime views (RTL-SDR hides the API key section)
     private View maritimeApiKeySection;
@@ -219,8 +224,10 @@ public class AirSeaTool implements IPlugin,
             java.io.File dbDir = mv.getContext().getDir("airsea", android.content.Context.MODE_PRIVATE);
             icaoDatabase = new IcaoDatabase(dbDir);
             airMarkerManager.setIcaoDatabase(icaoDatabase);
-            if (!icaoDatabase.isFilePresent()) {
+            SharedPreferences pluginPrefs = mv.getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            if (!icaoDatabase.isFilePresent() && !pluginPrefs.getBoolean(PREF_ICAO_AUTO_DOWNLOAD_DONE, false)) {
                 Log.i(TAG, "ICAO database not present — initiating first-time download");
+                pluginPrefs.edit().putBoolean(PREF_ICAO_AUTO_DOWNLOAD_DONE, true).apply();
                 icaoDatabase.downloadAndUpdate((success, msg) ->
                         Log.i(TAG, "ICAO DB first-time download: "
                                 + (success ? "OK (" + msg + ")" : "failed: " + msg)));
@@ -330,6 +337,10 @@ public class AirSeaTool implements IPlugin,
         broadcastCheckbox.setOnClickListener(v ->
                 shipMarkerManager.setBroadcastAll(broadcastCheckbox.isChecked()));
 
+        maritimeMilitaryOnlyCheckbox = view.findViewById(R.id.maritime_military_only_checkbox);
+        maritimeMilitaryOnlyCheckbox.setOnClickListener(v ->
+                shipMarkerManager.setMilitaryOnly(maritimeMilitaryOnlyCheckbox.isChecked()));
+
         // Air section
         airEnableCheckbox = view.findViewById(R.id.air_enable_checkbox);
         airEnableCheckbox.setOnClickListener(v -> {
@@ -376,6 +387,15 @@ public class AirSeaTool implements IPlugin,
         airBroadcastCheckbox = view.findViewById(R.id.air_broadcast_all_checkbox);
         airBroadcastCheckbox.setOnClickListener(v ->
                 airMarkerManager.setBroadcastAll(airBroadcastCheckbox.isChecked()));
+
+        airMilitaryOnlyCheckbox = view.findViewById(R.id.air_military_only_checkbox);
+        airMilitaryOnlyCheckbox.setOnClickListener(v -> {
+            boolean checked = airMilitaryOnlyCheckbox.isChecked();
+            airMarkerManager.setMilitaryOnly(checked);
+            if (checked && (icaoDatabase == null || !icaoDatabase.isFilePresent())) {
+                updateAirStatus("ICAO Database download required for military affiliation");
+            }
+        });
 
         // RTL-SDR port
         rtlTcpSection   = view.findViewById(R.id.rtl_tcp_section);
@@ -720,6 +740,10 @@ public class AirSeaTool implements IPlugin,
         broadcastCheckbox.setChecked(broadcast);
         shipMarkerManager.setBroadcastAll(broadcast);
 
+        boolean maritimeMilOnly = prefs.getBoolean(PREF_MARITIME_MILITARY_ONLY, false);
+        maritimeMilitaryOnlyCheckbox.setChecked(maritimeMilOnly);
+        shipMarkerManager.setMilitaryOnly(maritimeMilOnly);
+
         boolean airEnabled = prefs.getBoolean(PREF_AIR_ENABLED, true);
         airEnableCheckbox.setChecked(airEnabled);
         if (airContent != null)
@@ -737,6 +761,13 @@ public class AirSeaTool implements IPlugin,
         boolean airBroadcast = prefs.getBoolean(PREF_AIR_BROADCAST_ALL, false);
         airBroadcastCheckbox.setChecked(airBroadcast);
         airMarkerManager.setBroadcastAll(airBroadcast);
+
+        boolean airMilOnly = prefs.getBoolean(PREF_AIR_MILITARY_ONLY, false);
+        airMilitaryOnlyCheckbox.setChecked(airMilOnly);
+        airMarkerManager.setMilitaryOnly(airMilOnly);
+        if (airMilOnly && (icaoDatabase == null || !icaoDatabase.isFilePresent())) {
+            updateAirStatus("ICAO Database download required for military affiliation");
+        }
 
         int savedPort = prefs.getInt(PREF_RTL_TCP_PORT, RtlTcpClient.DEFAULT_PORT);
         if (rtlTcpPortInput != null)
@@ -767,11 +798,15 @@ public class AirSeaTool implements IPlugin,
                 .putInt(PREF_FREQUENCY_INDEX,
                         frequencySpinner.getSelectedItemPosition())
                 .putBoolean(PREF_BROADCAST_ALL, broadcastCheckbox.isChecked())
+                .putBoolean(PREF_MARITIME_MILITARY_ONLY,
+                        maritimeMilitaryOnlyCheckbox.isChecked())
                 .putBoolean(PREF_AIR_ENABLED, airEnableCheckbox.isChecked())
                 .putInt(PREF_AIR_SOURCE_INDEX,
                         airDataSourceSpinner.getSelectedItemPosition())
                 .putBoolean(PREF_AIR_BROADCAST_ALL,
-                        airBroadcastCheckbox.isChecked());
+                        airBroadcastCheckbox.isChecked())
+                .putBoolean(PREF_AIR_MILITARY_ONLY,
+                        airMilitaryOnlyCheckbox.isChecked());
         for (int i = 0; i < airApiKeys.length; i++)
             editor.putString(PREF_AIR_API_KEY + i,
                     airApiKeys[i] != null ? airApiKeys[i] : "");
@@ -873,12 +908,20 @@ public class AirSeaTool implements IPlugin,
 
         savePreferences();
 
-        // If the ICAO database has never been downloaded, kick off a silent download now
-        if (icaoDatabase != null && !icaoDatabase.isFilePresent() && !icaoDatabase.isDownloading()) {
-            Log.i(TAG, "ICAO database absent at sync start — initiating background download");
-            icaoDatabase.downloadAndUpdate((success, msg) ->
-                    Log.i(TAG, "ICAO DB sync-triggered download: "
-                            + (success ? "OK (" + msg + ")" : "failed: " + msg)));
+        // If the ICAO database has never been downloaded and auto-download hasn't been attempted yet,
+        // kick off a silent download now (one-time only — after this the user must update manually)
+        MapView mv2 = MapView.getMapView();
+        if (mv2 != null) {
+            SharedPreferences pluginPrefs = mv2.getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            if (icaoDatabase != null && !icaoDatabase.isFilePresent()
+                    && !icaoDatabase.isDownloading()
+                    && !pluginPrefs.getBoolean(PREF_ICAO_AUTO_DOWNLOAD_DONE, false)) {
+                Log.i(TAG, "ICAO database absent at sync start — initiating background download");
+                pluginPrefs.edit().putBoolean(PREF_ICAO_AUTO_DOWNLOAD_DONE, true).apply();
+                icaoDatabase.downloadAndUpdate((success, msg) ->
+                        Log.i(TAG, "ICAO DB sync-triggered download: "
+                                + (success ? "OK (" + msg + ")" : "failed: " + msg)));
+            }
         }
 
         int freqSeconds = FREQUENCY_VALUES[frequencySpinner.getSelectedItemPosition()];

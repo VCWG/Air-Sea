@@ -148,6 +148,8 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
             pd.setProgress(0);
             pd.setIndeterminate(false);
             pd.setCancelable(false);
+            pd.setButton(ProgressDialog.BUTTON_NEGATIVE, "Cancel",
+                    (dialog, which) -> icaoDatabase.cancelDownload());
             pd.show();
 
             icaoDatabase.downloadAndUpdate(
@@ -159,6 +161,7 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
                         if (getActivity() == null) return;
                         updateIcaoDbSummary(icaoUpdatePref, icaoDatabase);
                         updateIcaoDeleteSummary(icaoDeletePref, icaoDatabase);
+                        if ("Download cancelled".equals(msg)) return;
                         Toast.makeText(act,
                                 success ? "ICAO database updated" : "Update failed: " + msg,
                                 Toast.LENGTH_LONG).show();

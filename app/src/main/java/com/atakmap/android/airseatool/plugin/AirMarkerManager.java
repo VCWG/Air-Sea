@@ -50,6 +50,7 @@ public class AirMarkerManager {
     private MapGroup airGroup;
     private long updateFrequencyMs;
     private volatile boolean broadcastAll = false;
+    private volatile boolean militaryOnly = false;
     private long nextEvictMs = 0;
 
     public AirMarkerManager(int updateFrequencySeconds) {
@@ -83,6 +84,30 @@ public class AirMarkerManager {
     public void setBroadcastAll(boolean broadcast) {
         this.broadcastAll = broadcast;
         if (broadcast) broadcastAllExisting();
+    }
+
+    public void setMilitaryOnly(boolean militaryOnly) {
+        this.militaryOnly = militaryOnly;
+        if (militaryOnly) {
+            // Evict any currently-displayed aircraft not flagged military in the ICAO database
+            Iterator<Map.Entry<String, Marker>> it = markers.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, Marker> entry = it.next();
+                String uid = entry.getKey();
+                String icao24 = uid.replace(UID_PREFIX, "");
+                IcaoRecord rec = (icaoDatabase != null) ? icaoDatabase.lookup(icao24) : null;
+                if (rec == null || !rec.mil) {
+                    Marker m = entry.getValue();
+                    MapGroup parent = m.getGroup();
+                    if (parent != null) parent.removeItem(m);
+                    it.remove();
+                    lastSetTypes.remove(uid);
+                    userTypeOverrides.remove(uid);
+                    categoryCache.remove(icao24);
+                    lastUpdateTimes.remove(icao24);
+                }
+            }
+        }
     }
 
     public int getAircraftCount() {
@@ -124,6 +149,11 @@ public class AirMarkerManager {
         if (updateFrequencyMs > 0
                 && lastUpdate != null
                 && (now - lastUpdate) < updateFrequencyMs) return;
+
+        if (militaryOnly) {
+            IcaoRecord rec = (icaoDatabase != null) ? icaoDatabase.lookup(a.icao24) : null;
+            if (rec == null || !rec.mil) return;
+        }
 
         String uid = UID_PREFIX + a.icao24;
         MapGroup group = getOrCreateGroup();
