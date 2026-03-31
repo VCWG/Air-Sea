@@ -2,7 +2,7 @@
 
 An open source ATAK-CIV plugin that displays real-time ship and aircraft positions from AIS and ADS-B data sources as CoT markers.
 
-https://github.com/user-attachments/assets/e23ff31c-7f9e-4da3-b708-9757700f6cca
+https://github.com/user-attachments/assets/d7ec7bdb-f483-4b2f-a4a9-0fcd011b47b8
 ## Features
 
 - Converts real-time ship and aircraft position information from AIS and ADS-B to CoT standard markers
@@ -10,8 +10,9 @@ https://github.com/user-attachments/assets/e23ff31c-7f9e-4da3-b708-9757700f6cca
 - Tags ships and aircraft with their current speed and heading (if available)
 - Identify which ships or aircraft are underway at a glance; contacts with speed vectors are labeled with an arrow indicating their direction of travel
 - CoT markers are labeled with ship name or aircraft callsign, and are auto-assigned specific CoT types based on their broadcasted category code
+- Locally stored and updated ICAO database can identify an aircraft's military affiliation, type, and owner/operator without an internet connection and regardless of ADS-B source
 - Includes additional ship information remarks (MMSI, rate of turn, IMO Number, Ship Type, Draught, Destination, ETA)
-- Includes additional aircraft information remarks (ICAO, Registration, Type, Altitude, Speed, Squawk, Category)
+- Includes additional aircraft information remarks (ICAO, Registration, Type, Altitude, Speed, Squawk, Category, Type, Owner/Operator)
 - User can set update frequency, broadcast status, and default team affiliation for generated CoTs
 - User can edit CoT team affiliation or specific CoT type, and edits persist across tracking updates
 
@@ -21,11 +22,12 @@ https://github.com/user-attachments/assets/e23ff31c-7f9e-4da3-b708-9757700f6cca
 - This data source is free, but users must register on aisstream.io and generate an API key to input into the plugin.
 ### Air Traffic APIs
 - [adsb.fi](https://adsb.fi/), [airplanes.live](https://airplanes.live/), and [adsb.lol](https://adsb.lol/) are supported without any API key provided.
+- [ADS-B Exchange](https://www.adsbexchange.com/) is supported with a user-provided API key available through [RapidAPI](https://rapidapi.com/adsbx/api/adsbexchange-com1).
 - [OpenSky](https://opensky-network.org/) is supported with an optional API key to increase request limits. In testing, it has been observed that OpenSky does not reliably broadcast aircraft category codes, and air contacts may not auto-assign the correct CoT types if using OpenSky as the data source.
 ### Hardware
 #### RTL-SDR
 - This plugin supports ADS-B monitoring with a RTL-SDR receiver connected via USB. Follow the setup instructions below:
-  - Install the RTL-SDR Driver App from Signalware, [available on Play Store.](https://play.google.com/store/apps/details?id=marto.rtl_tcp_andro)
+  - Install the RTL-SDR Driver App from Signalware, [available on Play Store](https://play.google.com/store/apps/details?id=marto.rtl_tcp_andro).
   - Disable battery optimization for the RTL-SDR Driver App/allow to run in background
   - Select the ADS-B data source as "USB: RTL-SDR"
   - Click "START" next to the RTL-SDR port number to automatically launch the RTL-SDR service with the specified port number
