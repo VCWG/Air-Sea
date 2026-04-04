@@ -93,13 +93,19 @@ public class ShipMarkerManager {
     public void setMilitaryOnly(boolean militaryOnly) {
         this.militaryOnly = militaryOnly;
         if (militaryOnly) {
-            // Evict any currently-displayed ships that are not military type
+            // Evict any currently-displayed ships whose effective CoT type is not military
             Iterator<Map.Entry<Integer, Integer>> it = lastShipTypes.entrySet().iterator();
             while (it.hasNext()) {
                 Map.Entry<Integer, Integer> entry = it.next();
-                if (!isMilitaryShipType(entry.getValue())) {
-                    int mmsi = entry.getKey();
-                    String uid = UID_PREFIX + mmsi;
+                int mmsi = entry.getKey();
+                String uid = UID_PREFIX + mmsi;
+                // Use the marker's live type as ground truth — captures user changes
+                // that haven't yet been picked up by detectUserTypeChange.
+                Marker existing = markers.get(uid);
+                String effectiveType = (existing != null)
+                        ? existing.getType()
+                        : lastSetTypes.get(uid);
+                if (!isMilitaryCotType(effectiveType)) {
                     Marker m = markers.remove(uid);
                     if (m != null) {
                         MapGroup parent = m.getGroup();
@@ -114,8 +120,18 @@ public class ShipMarkerManager {
         }
     }
 
-    private static boolean isMilitaryShipType(int shipType) {
-        return shipType == 35 || shipType == 51 || shipType == 55;
+    /**
+     * Returns true for CoT types that count as military/noncombatant:
+     * exact "a-{affil}-S-C" (combatant) or "a-{affil}-S-N" and any subtype.
+     */
+    private static boolean isMilitaryCotType(String cotType) {
+        if (cotType == null || cotType.length() < 7) return false;
+        if (!cotType.startsWith("a-") || cotType.charAt(3) != '-'
+                || cotType.charAt(4) != 'S' || cotType.charAt(5) != '-') return false;
+        char typeChar = cotType.charAt(6);
+        if (typeChar == 'C') return cotType.length() == 7;  // exact a-{affil}-S-C
+        if (typeChar == 'N') return true;                    // a-{affil}-S-N or any subtype
+        return false;
     }
 
     public int getShipCount() {
@@ -158,15 +174,6 @@ public class ShipMarkerManager {
         }
         lastShipTypes.put(mmsi, shipType);
         lastUpdateTimes.put(mmsi, now);
-
-        if (militaryOnly) {
-            if (isMilitaryShipType(shipType)) {
-                Log.d(TAG, "MilFilter PASS  mmsi=" + mmsi + " type=" + shipType);
-            } else {
-                Log.d(TAG, "MilFilter BLOCK mmsi=" + mmsi + " type=" + shipType);
-                return;
-            }
-        }
 
         String uid = UID_PREFIX + mmsi;
         MapGroup group = getOrCreateGroup();
@@ -219,7 +226,24 @@ public class ShipMarkerManager {
                 detectUserTypeChange(uid, marker);
             }
 
-            String cotType = resolveEffectiveType(resolveCotType(shipType), uid);
+            // Name-based CoT overrides — take precedence over broadcast type code,
+            // but user manual type changes still win via resolveEffectiveType.
+            String nameLower = shipName != null
+                    ? shipName.toLowerCase(java.util.Locale.US) : "";
+            String autoType;
+            if (nameLower.contains("warship")) {
+                autoType = applyAffiliation(COT_TYPE_COMBATANT);       // a-{affil}-S-C
+            } else if (nameLower.startsWith("usns")) {
+                autoType = applyAffiliation(COT_TYPE_NONCOMBATANT);    // a-{affil}-S-N
+            } else {
+                autoType = resolveCotType(shipType);
+            }
+            String cotType = resolveEffectiveType(autoType, uid);
+
+            if (militaryOnly && !isMilitaryCotType(cotType)) {
+                Log.d(TAG, "MilFilter BLOCK mmsi=" + mmsi + " cotType=" + cotType);
+                return;
+            }
 
             if (marker == null) {
                 marker = new Marker(point, uid);

@@ -89,14 +89,18 @@ public class AirMarkerManager {
     public void setMilitaryOnly(boolean militaryOnly) {
         this.militaryOnly = militaryOnly;
         if (militaryOnly) {
-            // Evict any currently-displayed aircraft not flagged military in the ICAO database
+            // Evict aircraft that are neither ICAO-flagged military nor carrying a
+            // user-assigned military CoT type. Use the marker's live type as ground
+            // truth to catch user changes not yet picked up by detectUserTypeChange.
             Iterator<Map.Entry<String, Marker>> it = markers.entrySet().iterator();
             while (it.hasNext()) {
                 Map.Entry<String, Marker> entry = it.next();
                 String uid = entry.getKey();
                 String icao24 = uid.replace(UID_PREFIX, "");
                 IcaoRecord rec = (icaoDatabase != null) ? icaoDatabase.lookup(icao24) : null;
-                if (rec == null || !rec.mil) {
+                boolean isMilIcao = (rec != null && rec.mil);
+                boolean isMilType = isMilitaryAirCotType(entry.getValue().getType());
+                if (!isMilIcao && !isMilType) {
                     Marker m = entry.getValue();
                     MapGroup parent = m.getGroup();
                     if (parent != null) parent.removeItem(m);
@@ -108,6 +112,14 @@ public class AirMarkerManager {
                 }
             }
         }
+    }
+
+    /** Returns true for military air CoT types: a-{affil}-A-M-* */
+    private static boolean isMilitaryAirCotType(String cotType) {
+        if (cotType == null || cotType.length() < 7) return false;
+        return cotType.startsWith("a-") && cotType.charAt(3) == '-'
+                && cotType.charAt(4) == 'A' && cotType.charAt(5) == '-'
+                && cotType.charAt(6) == 'M';
     }
 
     public int getAircraftCount() {
@@ -152,7 +164,11 @@ public class AirMarkerManager {
 
         if (militaryOnly) {
             IcaoRecord rec = (icaoDatabase != null) ? icaoDatabase.lookup(a.icao24) : null;
-            if (rec == null || !rec.mil) return;
+            boolean isMilIcao = (rec != null && rec.mil);
+            if (!isMilIcao) {
+                String checkUid = UID_PREFIX + a.icao24;
+                if (!isMilitaryAirCotType(userTypeOverrides.get(checkUid))) return;
+            }
         }
 
         String uid = UID_PREFIX + a.icao24;
