@@ -93,7 +93,7 @@ public class AirSeaTool implements IPlugin,
 
     // Index 0 = RTL-SDR; 1-5 = network sources (air spinner only)
     private static final String[] MARITIME_SOURCE_LABELS =
-            {"aisstream.io" /*, "VesselFinder" — disabled pending subscription key */};
+            {"aisstream.io", "VesselFinder"};
     private static final String[] AIR_SOURCE_LABELS =
             {"USB: RTL-SDR", "ADS-B Exchange", "adsb.fi", "airplanes.live", "adsb.lol", "OpenSky"};
 
@@ -453,9 +453,12 @@ public class AirSeaTool implements IPlugin,
         if (mv == null) return;
         new AlertDialog.Builder(mv.getContext())
                 .setTitle("Maritime Data Source")
-                .setMessage("aisstream.io provides real-time AIS vessel position "
-                        + "data over the internet. A free API key is required "
-                        + "— register at aisstream.io")
+                .setMessage("aisstream.io provides free realtime AIS vessel positions. "
+                        + "Users must register at aisstream.io to obtain a free API key.\n\n"
+                        + "VesselFinder provides realtime AIS positions via their LiveData "
+                        + "subscription service. User must have a valid subscription-based "
+                        + "(not credit-based) API key for their area of interest. Contact "
+                        + "VesselFinder to obtain a LiveData API key.")
                 .setPositiveButton("OK", null)
                 .show();
     }
@@ -972,6 +975,16 @@ public class AirSeaTool implements IPlugin,
                         double cog, double sog, int trueHeading, int navStatus,
                         int shipType, double draught, String destination, String eta,
                         int imoNumber) {
+                    if (lastBoundingBox != null) {
+                        double minLat = lastBoundingBox[0][0];
+                        double minLon = lastBoundingBox[0][1];
+                        double maxLat = lastBoundingBox[1][0];
+                        double maxLon = lastBoundingBox[1][1];
+                        if (lat < minLat || lat > maxLat || lon < minLon || lon > maxLon) {
+                            shipMarkerManager.removeShip(mmsi);
+                            return;
+                        }
+                    }
                     shipMarkerManager.updateShip(mmsi, name, lat, lon, cog, sog,
                             0, trueHeading, navStatus, shipType, draught,
                             destination, eta, imoNumber);

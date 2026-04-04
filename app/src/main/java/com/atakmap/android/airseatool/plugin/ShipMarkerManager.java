@@ -445,6 +445,19 @@ public class ShipMarkerManager {
         }
     }
 
+    public void removeShip(int mmsi) {
+        String uid = UID_PREFIX + mmsi;
+        Marker m = markers.remove(uid);
+        if (m != null) {
+            MapGroup parent = m.getGroup();
+            if (parent != null) parent.removeItem(m);
+        }
+        lastUpdateTimes.remove(mmsi);
+        lastShipTypes.remove(mmsi);
+        lastSetTypes.remove(uid);
+        userTypeOverrides.remove(uid);
+    }
+
     public void removeAllMarkers() {
         // Remove each marker individually — user-retyped markers may have
         // been moved to a different MapGroup by ATAK
