@@ -130,7 +130,7 @@ public class ShipMarkerManager {
                 || cotType.charAt(4) != 'S' || cotType.charAt(5) != '-') return false;
         char typeChar = cotType.charAt(6);
         if (typeChar == 'C') return cotType.length() == 7;  // exact a-{affil}-S-C
-        if (typeChar == 'N') return true;                    // a-{affil}-S-N or any subtype
+        if (typeChar == 'N') return !cotType.endsWith("-S-N-S"); // noncombatant subtypes except pilot/harbor service
         return false;
     }
 
