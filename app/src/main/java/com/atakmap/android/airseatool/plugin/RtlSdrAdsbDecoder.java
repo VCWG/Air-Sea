@@ -52,6 +52,15 @@ public class RtlSdrAdsbDecoder {
         void onAircraft(Aircraft a);
     }
 
+    /**
+     * Called once after the decoder has acquired the dongle's crystal PPM
+     * offset from tracked carrier phase. The caller should persist this
+     * value so {@link RtlTcpClient} can apply hardware-level correction.
+     */
+    public interface PpmCallback {
+        void onPpmEstimated(int ppm);
+    }
+
     // ─── Per-aircraft accumulated state ────────────────────────────────────
 
     private static class AircraftState {
@@ -81,6 +90,7 @@ public class RtlSdrAdsbDecoder {
     }
 
     private final Callback callback;
+    private final PpmCallback ppmCallback; // nullable
     private final Map<String, AircraftState> states = new HashMap<>();
     private byte[] carryBuf = new byte[0];
     private long   nextEvict = 0;
@@ -88,8 +98,29 @@ public class RtlSdrAdsbDecoder {
     // Rate tracking: log update interval per aircraft
     private final Map<String, Long> lastFireTime = new HashMap<>();
 
+    // ─── Carrier-phase PPM tracking ─────────────────────────────────────────
+    private static final int    ADSB_SAMPLE_RATE = 2_000_000;
+    private static final long   ADSB_CENTER_FREQ = 1_090_000_000L;
+    private static final long   CARRIER_LOG_MS   = 10_000;
+    private static final int    PPM_LOCK_FRAMES  = 3;    // aircraft frames needed to lock
+
+    private float  pI, pQ;             // previous I/Q for FM discriminator
+    private double ppmPhaseSum;        // accumulated phase sum
+    private long   ppmPhaseCount;      // samples with valid magnitude
+    private long   lastCarrierLog;
+    private int    ppmEstimateCount;        // number of PPM estimates collected
+    private double ppmEstimateSum;          // running sum of PPM estimates
+    private int    ppmFrameCount;           // aircraft decoded since last PPM log
+    private boolean ppmLocked;
+
+    public RtlSdrAdsbDecoder(Callback cb, PpmCallback ppmCb) {
+        this.callback    = cb;
+        this.ppmCallback = ppmCb;
+        this.lastCarrierLog = System.currentTimeMillis();
+    }
+
     public RtlSdrAdsbDecoder(Callback cb) {
-        this.callback = cb;
+        this(cb, null);
     }
 
     // ─── Entry point ───────────────────────────────────────────────────────
@@ -102,13 +133,54 @@ public class RtlSdrAdsbDecoder {
             nextEvict = now + 60_000L;
         }
 
-        // Compute magnitude array: mag[i] = |I[i]| + |Q[i]|
+        // Compute magnitude array and track carrier phase for PPM estimation
         int samples = len / 2;
         float[] mag = new float[samples];
         for (int i = 0; i < samples; i++) {
             float I = (raw[2 * i]     & 0xff) - 127.4f;
             float Q = (raw[2 * i + 1] & 0xff) - 127.4f;
             mag[i] = Math.abs(I) + Math.abs(Q);
+
+            // FM discriminator: dphi ≈ (i_curr * q_prev - q_curr * i_prev) / mag²
+            float magSq = I * I + Q * Q;
+            if (magSq > 1f) {
+                double dphi = (double)(I * pQ - Q * pI) / magSq;
+                ppmPhaseSum += dphi;
+                ppmPhaseCount++;
+            }
+            pI = I; pQ = Q;
+        }
+
+        // Periodic PPM estimation from accumulated carrier phase
+        if (!ppmLocked && now - lastCarrierLog >= CARRIER_LOG_MS) {
+            lastCarrierLog = now;
+            if (ppmPhaseCount > 0) {
+                double avgDphi = ppmPhaseSum / ppmPhaseCount;
+                double carrHz = avgDphi * ADSB_SAMPLE_RATE / (2.0 * Math.PI);
+                int    ppm    = (int) Math.round(-carrHz * 1e6 / ADSB_CENTER_FREQ);
+                ppmEstimateSum += ppm;
+                ppmEstimateCount++;
+                Log.d(TAG, "Auto-PPM: carrier " + (int)carrHz + " Hz"
+                        + " est=" + ppm + " ppm"
+                        + " samples=" + ppmEstimateCount + "/" + PPM_LOCK_FRAMES
+                        + " aircraft=" + ppmFrameCount);
+                if (ppmEstimateCount >= PPM_LOCK_FRAMES && ppmFrameCount >= 3) {
+                    int avgPpm = (int) Math.round(ppmEstimateSum / ppmEstimateCount);
+                    if (Math.abs(avgPpm) <= 400) {
+                        ppmLocked = true;
+                        Log.d(TAG, "Auto-PPM locked: " + avgPpm + " ppm");
+                        if (ppmCallback != null) {
+                            ppmCallback.onPpmEstimated(avgPpm);
+                        }
+                    } else {
+                        Log.w(TAG, "Auto-PPM: " + avgPpm
+                                + " ppm outside ±400 ppm — likely noise, retrying");
+                        ppmEstimateSum = 0; ppmEstimateCount = 0;
+                    }
+                }
+            }
+            ppmPhaseSum = 0; ppmPhaseCount = 0;
+            ppmFrameCount = 0;
         }
 
         // Prepend carry-over from previous chunk
@@ -156,6 +228,7 @@ public class RtlSdrAdsbDecoder {
             int[] bits = decodeBits(buf, dataStart, msgLen);
             if (!checkCrc(bits, msgLen)) continue;
 
+            ppmFrameCount++;
             if (df == 17 || df == 18) {
                 parseAdsb(bits, now);
             } else if (df == 4 || df == 5 || df == 20 || df == 21) {

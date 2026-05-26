@@ -17,7 +17,7 @@ import com.atakmap.coremap.log.Log;
  * Uses the same {@link AisStreamClient.Listener} interface so
  * {@link AirSeaTool} needs no new listener methods.
  *
- * Tunes to 162.0 MHz at 288 ksps, FM-demodulates, HDLC-decodes, and calls
+ * Tunes to 162.0 MHz at 960 ksps, FM-demodulates, HDLC-decodes, and calls
  * the listener for each position report.
  */
 public class RtlSdrAisClient {
@@ -29,16 +29,28 @@ public class RtlSdrAisClient {
     private static final int REDISCOVER_AFTER = 3;
 
     private final AisStreamClient.Listener listener;
+    private final RtlSdrAisDecoder.PpmCallback ppmCallback;
     private String currentHost;
     private int    currentPort;
+    private final int gainTenthsDb;
+    private final int ppmOffset;
     private RtlTcpClient tcpClient;
     private volatile boolean running = false;
 
     public RtlSdrAisClient(AisStreamClient.Listener listener,
-                           String host, int port) {
-        this.listener    = listener;
-        this.currentHost = host;
-        this.currentPort = port;
+                           String host, int port, int gainTenthsDb, int ppmOffset,
+                           RtlSdrAisDecoder.PpmCallback ppmCallback) {
+        this.listener      = listener;
+        this.ppmCallback   = ppmCallback;
+        this.currentHost   = host;
+        this.currentPort   = port;
+        this.gainTenthsDb  = gainTenthsDb;
+        this.ppmOffset     = ppmOffset;
+    }
+
+    public RtlSdrAisClient(AisStreamClient.Listener listener,
+                           String host, int port, int gainTenthsDb, int ppmOffset) {
+        this(listener, host, port, gainTenthsDb, ppmOffset, null);
     }
 
     /** Connect to the local rtl_tcp server and start streaming AIS. Auto-reconnects on drop. */
@@ -49,7 +61,7 @@ public class RtlSdrAisClient {
             boolean errorReported = false; // true once we've told the UI the server is gone
 
             while (running) {
-                tcpClient = new RtlTcpClient(currentHost, currentPort);
+                tcpClient = new RtlTcpClient(currentHost, currentPort, gainTenthsDb, ppmOffset);
                 try {
                     tcpClient.connect(RtlSdrAisDecoder.CENTER_FREQ,
                                       RtlSdrAisDecoder.SAMPLE_RATE);
@@ -61,12 +73,28 @@ public class RtlSdrAisClient {
 
                     // Fresh decoder on each connection so state doesn't carry over
                     RtlSdrAisDecoder decoder = new RtlSdrAisDecoder(
-                            (mmsi, shipName, lat, lon, cog, sog, heading, navStatus) -> {
-                        if (!running) return;
-                        listener.onShipPosition(mmsi,
-                                shipName.isEmpty() ? "MMSI-" + mmsi : shipName,
-                                lat, lon, cog, sog, 0, heading,
-                                navStatus, -1, -1, "", "", -1);
+                            new RtlSdrAisDecoder.Callback() {
+                        @Override
+                        public void onPosition(int mmsi, String shipName,
+                                double lat, double lon, double cog, double sog,
+                                int rot, int heading, int navStatus, int shipType,
+                                double draught, String destination, String eta,
+                                int imoNumber) {
+                            if (!running) return;
+                            listener.onShipPosition(mmsi,
+                                    shipName.isEmpty() ? "MMSI-" + mmsi : shipName,
+                                    lat, lon, cog, sog, rot, heading, navStatus,
+                                    shipType, draught, destination, eta, imoNumber);
+                        }
+
+                        @Override
+                        public void onShipName(int mmsi, String shipName) {
+                            if (!running || shipName == null || shipName.isEmpty()) return;
+                            listener.onShipName(mmsi, shipName);
+                        }
+                    }, estimatedPpm -> {
+                        Log.d(TAG, "Auto-PPM estimated: " + estimatedPpm + " ppm");
+                        if (ppmCallback != null) ppmCallback.onPpmEstimated(estimatedPpm);
                     });
 
                     tcpClient.stream((buf, len) -> {

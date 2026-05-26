@@ -16,11 +16,19 @@
 
     <ListPreference
         android:key="airsea_rtl_gain"
-        android:title="RTL-SDR Gain"
+        android:title="RTL-SDR Gain (Air)"
         android:summary="%s"
-        android:entries="@array/rtl_gain_labels"
+        android:entries="@array/rtl_gain_air_labels"
         android:entryValues="@array/rtl_gain_values"
         android:defaultValue="402" />
+
+    <ListPreference
+        android:key="airsea_rtl_gain_sea"
+        android:title="RTL-SDR Gain (Sea)"
+        android:summary="%s"
+        android:entries="@array/rtl_gain_sea_labels"
+        android:entryValues="@array/rtl_gain_values"
+        android:defaultValue="280" />
 
     <EditTextPreference
         android:key="airsea_rtl_range_km"

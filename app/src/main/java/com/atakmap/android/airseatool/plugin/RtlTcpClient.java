@@ -43,6 +43,7 @@ public class RtlTcpClient {
     /** Default gain: 40.2 dB (402 tenths) — best compromise for ADS-B with R820T/R820T2. */
     public  static final int DEFAULT_GAIN_TENTHS_DB = 402;
     private final        int gainTenthsDb;
+    private final        int ppmOffset; // crystal correction: positive = crystal runs fast
 
     /** IQ sample callback; called on the streaming thread. */
     @FunctionalInterface
@@ -50,22 +51,27 @@ public class RtlTcpClient {
         void onSamples(byte[] buf, int len);
     }
 
-    public RtlTcpClient(String host, int port, int gainTenthsDb) {
+    public RtlTcpClient(String host, int port, int gainTenthsDb, int ppmOffset) {
         this.host          = host;
         this.port          = port;
         this.gainTenthsDb  = gainTenthsDb;
+        this.ppmOffset     = ppmOffset;
+    }
+
+    public RtlTcpClient(String host, int port, int gainTenthsDb) {
+        this(host, port, gainTenthsDb, 0);
     }
 
     public RtlTcpClient(String host, int port) {
-        this(host, port, DEFAULT_GAIN_TENTHS_DB);
+        this(host, port, DEFAULT_GAIN_TENTHS_DB, 0);
     }
 
     public RtlTcpClient(int port) {
-        this("127.0.0.1", port, DEFAULT_GAIN_TENTHS_DB);
+        this("127.0.0.1", port, DEFAULT_GAIN_TENTHS_DB, 0);
     }
 
     public RtlTcpClient() {
-        this("127.0.0.1", DEFAULT_PORT, DEFAULT_GAIN_TENTHS_DB);
+        this("127.0.0.1", DEFAULT_PORT, DEFAULT_GAIN_TENTHS_DB, 0);
     }
 
     private Socket          socket;
@@ -95,14 +101,21 @@ public class RtlTcpClient {
         int gainCount  = toInt(magic, 8);
         Log.d(TAG, "rtl_tcp handshake OK: tuner=" + tunerType + " gains=" + gainCount);
 
+        // Apply PPM correction: if crystal runs fast by +N ppm, we request a lower centre
+        // frequency so the dongle's actual tuning lands at the nominal frequency.
+        //   corrected = nominal × (1 − ppm/1e6)
+        long correctedFreq = freqHz - Math.round(freqHz * ppmOffset / 1e6);
+
         // Configure the device
         sendCmd(CMD_SET_SAMPLE_RATE, sampleRateHz);
-        sendCmd(CMD_SET_FREQ,        (int) freqHz);
+        sendCmd(CMD_SET_FREQ,        (int) correctedFreq);
         sendCmd(CMD_SET_GAIN_MODE,   1);              // manual gain
         sendCmd(CMD_SET_GAIN,        gainTenthsDb);
         sendCmd(CMD_SET_AGC_MODE,    0);              // RTL AGC off
 
-        Log.d(TAG, "rtl_tcp configured: freq=" + freqHz + " rate=" + sampleRateHz
+        Log.d(TAG, "rtl_tcp configured: freq=" + freqHz
+                + (ppmOffset != 0 ? " (corrected→" + correctedFreq + " ppm=" + ppmOffset + ")" : "")
+                + " rate=" + sampleRateHz
                 + " gain=" + (gainTenthsDb / 10.0) + " dB (manual)");
     }
 

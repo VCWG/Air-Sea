@@ -30,24 +30,39 @@ public class RtlSdrAdsbClient {
     private static final int REDISCOVER_AFTER = 3;
 
     private final AdsbStreamClient.Listener listener;
+    private final RtlSdrAdsbDecoder.PpmCallback ppmCallback;
     private String currentHost;
     private int    currentPort;
     private final int gainTenthsDb;
+    private final int ppmOffset;
     private RtlTcpClient tcpClient;
     private volatile boolean running = false;
     private Thread thread;
 
     public RtlSdrAdsbClient(AdsbStreamClient.Listener listener,
-                            String host, int port, int gainTenthsDb) {
+                            String host, int port, int gainTenthsDb, int ppmOffset,
+                            RtlSdrAdsbDecoder.PpmCallback ppmCallback) {
         this.listener      = listener;
+        this.ppmCallback   = ppmCallback;
         this.currentHost   = host;
         this.currentPort   = port;
         this.gainTenthsDb  = gainTenthsDb;
+        this.ppmOffset     = ppmOffset;
+    }
+
+    public RtlSdrAdsbClient(AdsbStreamClient.Listener listener,
+                            String host, int port, int gainTenthsDb, int ppmOffset) {
+        this(listener, host, port, gainTenthsDb, ppmOffset, null);
+    }
+
+    public RtlSdrAdsbClient(AdsbStreamClient.Listener listener,
+                            String host, int port, int gainTenthsDb) {
+        this(listener, host, port, gainTenthsDb, 0, null);
     }
 
     public RtlSdrAdsbClient(AdsbStreamClient.Listener listener,
                             String host, int port) {
-        this(listener, host, port, RtlTcpClient.DEFAULT_GAIN_TENTHS_DB);
+        this(listener, host, port, RtlTcpClient.DEFAULT_GAIN_TENTHS_DB, 0, null);
     }
 
     /** Connect to the local rtl_tcp server and start streaming ADS-B. Auto-reconnects on drop. */
@@ -58,7 +73,7 @@ public class RtlSdrAdsbClient {
             boolean errorReported = false; // true once we've told the UI the server is gone
 
             while (running) {
-                tcpClient = new RtlTcpClient(currentHost, currentPort, gainTenthsDb);
+                tcpClient = new RtlTcpClient(currentHost, currentPort, gainTenthsDb, ppmOffset);
                 try {
                     tcpClient.connect(1_090_000_000L, 2_000_000);
 
@@ -71,6 +86,9 @@ public class RtlSdrAdsbClient {
                     RtlSdrAdsbDecoder decoder = new RtlSdrAdsbDecoder(aircraft -> {
                         if (!running) return;
                         listener.onAircraft(aircraft);
+                    }, estimatedPpm -> {
+                        Log.d(TAG, "Auto-PPM estimated: " + estimatedPpm + " ppm");
+                        if (ppmCallback != null) ppmCallback.onPpmEstimated(estimatedPpm);
                     });
 
                     final long[] lastReport     = {System.currentTimeMillis()};

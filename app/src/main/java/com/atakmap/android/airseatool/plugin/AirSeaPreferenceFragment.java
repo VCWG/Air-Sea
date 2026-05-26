@@ -50,9 +50,11 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
                 .getTextArray(R.array.affiliation_labels);
         CharSequence[] affilValues = pluginContext.getResources()
                 .getTextArray(R.array.affiliation_values);
-        CharSequence[] gainLabels  = pluginContext.getResources()
-                .getTextArray(R.array.rtl_gain_labels);
-        CharSequence[] gainValues  = pluginContext.getResources()
+        CharSequence[] airGainLabels = pluginContext.getResources()
+                .getTextArray(R.array.rtl_gain_air_labels);
+        CharSequence[] seaGainLabels = pluginContext.getResources()
+                .getTextArray(R.array.rtl_gain_sea_labels);
+        CharSequence[] gainValues = pluginContext.getResources()
                 .getTextArray(R.array.rtl_gain_values);
 
         // ── Default Track Affiliation ────────────────────────────────────
@@ -69,20 +71,35 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
         });
         screen.addPreference(affilPref);
 
-        // ── RTL-SDR Gain ─────────────────────────────────────────────────
-        ListPreference gainPref = new ListPreference(getActivity());
-        gainPref.setKey(AirSeaTool.PREF_RTL_GAIN);
-        gainPref.setTitle("RTL-SDR Gain");
-        gainPref.setEntries(gainLabels);
-        gainPref.setEntryValues(gainValues);
-        gainPref.setDefaultValue(
+        // ── RTL-SDR Gain (Air) ────────────────────────────────────────────
+        ListPreference airGainPref = new ListPreference(getActivity());
+        airGainPref.setKey(AirSeaTool.PREF_RTL_GAIN_AIR);
+        airGainPref.setTitle("RTL-SDR Gain (Air)");
+        airGainPref.setEntries(airGainLabels);
+        airGainPref.setEntryValues(gainValues);
+        airGainPref.setDefaultValue(
                 String.valueOf(RtlTcpClient.DEFAULT_GAIN_TENTHS_DB));
-        gainPref.setOnPreferenceChangeListener((pref, newVal) -> {
+        airGainPref.setOnPreferenceChangeListener((pref, newVal) -> {
             setListSummary((ListPreference) pref,
-                    (String) newVal, gainLabels, gainValues);
+                    (String) newVal, airGainLabels, gainValues);
             return true;
         });
-        screen.addPreference(gainPref);
+        screen.addPreference(airGainPref);
+
+        // ── RTL-SDR Gain (Sea) ────────────────────────────────────────────
+        ListPreference seaGainPref = new ListPreference(getActivity());
+        seaGainPref.setKey(AirSeaTool.PREF_RTL_GAIN_SEA);
+        seaGainPref.setTitle("RTL-SDR Gain (Sea)");
+        seaGainPref.setEntries(seaGainLabels);
+        seaGainPref.setEntryValues(gainValues);
+        seaGainPref.setDefaultValue(
+                String.valueOf(AirSeaTool.DEFAULT_RTL_SEA_GAIN_TENTHS_DB));
+        seaGainPref.setOnPreferenceChangeListener((pref, newVal) -> {
+            setListSummary((ListPreference) pref,
+                    (String) newVal, seaGainLabels, gainValues);
+            return true;
+        });
+        screen.addPreference(seaGainPref);
 
         // ── RTL-SDR Range Limit ──────────────────────────────────────────
         EditTextPreference rangePref = new EditTextPreference(getActivity());
@@ -97,6 +114,24 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
             return true;
         });
         screen.addPreference(rangePref);
+
+        // ── RTL-SDR Crystal PPM Correction ──────────────────────────────
+        EditTextPreference ppmPref = new EditTextPreference(getActivity());
+        ppmPref.setKey(AirSeaTool.PREF_RTL_PPM);
+        ppmPref.setTitle("RTL-SDR Crystal PPM Correction");
+        ppmPref.setDialogTitle("RTL-SDR Crystal PPM Correction");
+        ppmPref.setDialogMessage(
+                "Frequency error of your dongle's crystal (e.g. +72 or -45).\n"
+                + "Find it using rtl_test, SDR#, or SDR Touch — each shows the PPM offset.\n"
+                + "Positive = crystal runs fast; negative = crystal runs slow.");
+        ppmPref.getEditText().setInputType(
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        ppmPref.setDefaultValue("0");
+        ppmPref.setOnPreferenceChangeListener((pref, newVal) -> {
+            setPpmSummary((EditTextPreference) pref, (String) newVal);
+            return true;
+        });
+        screen.addPreference(ppmPref);
 
         // ── Air Contact Stale Timeout ────────────────────────────────────
         EditTextPreference airStalePref = new EditTextPreference(getActivity());
@@ -214,8 +249,10 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
 
         // Set initial summaries now that preferences are bound to SharedPreferences
         setListSummary(affilPref, affilPref.getValue(), affilLabels, affilValues);
-        setListSummary(gainPref, gainPref.getValue(), gainLabels, gainValues);
+        setListSummary(airGainPref, airGainPref.getValue(), airGainLabels, gainValues);
+        setListSummary(seaGainPref, seaGainPref.getValue(), seaGainLabels, gainValues);
         setRangeSummary(rangePref, rangePref.getText());
+        setPpmSummary(ppmPref, ppmPref.getText());
         setStaleSummary(airStalePref, airStalePref.getText(), "s");
         setStaleSummary(shipStalePref, shipStalePref.getText(), "s");
         updateIcaoDeleteSummary(icaoDeletePref, icaoDatabase);
@@ -273,6 +310,19 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
             pref.setSummary(sec + " " + unit);
         } catch (NumberFormatException e) {
             pref.setSummary("(default)");
+        }
+    }
+
+    private static void setPpmSummary(EditTextPreference pref, String value) {
+        try {
+            int ppm = Integer.parseInt(value == null ? "" : value.trim());
+            if (ppm == 0) {
+                pref.setSummary("0 ppm (no correction)");
+            } else {
+                pref.setSummary(ppm + " ppm");
+            }
+        } catch (NumberFormatException e) {
+            pref.setSummary("0 ppm (no correction)");
         }
     }
 
