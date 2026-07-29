@@ -52,8 +52,6 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
                 .getTextArray(R.array.affiliation_values);
         CharSequence[] airGainLabels = pluginContext.getResources()
                 .getTextArray(R.array.rtl_gain_air_labels);
-        CharSequence[] seaGainLabels = pluginContext.getResources()
-                .getTextArray(R.array.rtl_gain_sea_labels);
         CharSequence[] gainValues = pluginContext.getResources()
                 .getTextArray(R.array.rtl_gain_values);
 
@@ -86,27 +84,12 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
         });
         screen.addPreference(airGainPref);
 
-        // ── RTL-SDR Gain (Sea) ────────────────────────────────────────────
-        ListPreference seaGainPref = new ListPreference(getActivity());
-        seaGainPref.setKey(AirSeaTool.PREF_RTL_GAIN_SEA);
-        seaGainPref.setTitle("RTL-SDR Gain (Sea)");
-        seaGainPref.setEntries(seaGainLabels);
-        seaGainPref.setEntryValues(gainValues);
-        seaGainPref.setDefaultValue(
-                String.valueOf(AirSeaTool.DEFAULT_RTL_SEA_GAIN_TENTHS_DB));
-        seaGainPref.setOnPreferenceChangeListener((pref, newVal) -> {
-            setListSummary((ListPreference) pref,
-                    (String) newVal, seaGainLabels, gainValues);
-            return true;
-        });
-        screen.addPreference(seaGainPref);
-
-        // ── RTL-SDR Range Limit ──────────────────────────────────────────
+        // ── RTL-SDR Range Limit (Air) ────────────────────────────────────
         EditTextPreference rangePref = new EditTextPreference(getActivity());
         rangePref.setKey(AirSeaTool.PREF_RTL_RANGE_KM);
-        rangePref.setTitle("RTL-SDR Range Limit");
-        rangePref.setDialogTitle("RTL-SDR Range Limit");
-        rangePref.setDialogMessage("Maximum range for RTL-SDR contacts (km)");
+        rangePref.setTitle("RTL-SDR Range Limit (Air)");
+        rangePref.setDialogTitle("RTL-SDR Range Limit (Air)");
+        rangePref.setDialogMessage("Maximum range for RTL-SDR aircraft contacts (km)");
         rangePref.getEditText().setInputType(InputType.TYPE_CLASS_NUMBER);
         rangePref.setDefaultValue("150");
         rangePref.setOnPreferenceChangeListener((pref, newVal) -> {
@@ -143,25 +126,41 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
         airStalePref.setDefaultValue(
                 String.valueOf(AirMarkerManager.DEFAULT_staleOffsetMs / 1000));
         airStalePref.setOnPreferenceChangeListener((pref, newVal) -> {
-            setStaleSummary((EditTextPreference) pref, (String) newVal, "s");
+            setStaleSummary((EditTextPreference) pref, (String) newVal, "sec");
             return true;
         });
         screen.addPreference(airStalePref);
 
-        // ── Ship Contact Stale Timeout ───────────────────────────────────
+        // ── Ship Contact Stale Timeout (API) ─────────────────────────────
         EditTextPreference shipStalePref = new EditTextPreference(getActivity());
         shipStalePref.setKey(AirSeaTool.PREF_SHIP_STALE_SEC);
-        shipStalePref.setTitle("Ship Contact Stale Timeout");
-        shipStalePref.setDialogTitle("Ship Contact Stale Timeout");
-        shipStalePref.setDialogMessage("Seconds before a ship contact is removed");
+        shipStalePref.setTitle("Ship Contact Stale Timeout (API)");
+        shipStalePref.setDialogTitle("Ship Contact Stale Timeout (API)");
+        shipStalePref.setDialogMessage("Seconds before an API ship contact is removed");
         shipStalePref.getEditText().setInputType(InputType.TYPE_CLASS_NUMBER);
         shipStalePref.setDefaultValue(
                 String.valueOf(ShipMarkerManager.DEFAULT_staleOffsetMs / 1000));
         shipStalePref.setOnPreferenceChangeListener((pref, newVal) -> {
-            setStaleSummary((EditTextPreference) pref, (String) newVal, "s");
+            setStaleSummary((EditTextPreference) pref, (String) newVal, "sec");
             return true;
         });
         screen.addPreference(shipStalePref);
+
+        // ── Ship Contact Stale Timeout (RTL-SDR) ─────────────────────────
+        EditTextPreference rtlShipStalePref = new EditTextPreference(getActivity());
+        rtlShipStalePref.setKey(AirSeaTool.PREF_RTL_SHIP_STALE_MIN);
+        rtlShipStalePref.setTitle("Ship Contact Stale Timeout (RTL-SDR)");
+        rtlShipStalePref.setDialogTitle("Ship Contact Stale Timeout (RTL-SDR)");
+        rtlShipStalePref.setDialogMessage(
+                "Minutes before an RTL-SDR ship contact is removed");
+        rtlShipStalePref.getEditText().setInputType(InputType.TYPE_CLASS_NUMBER);
+        rtlShipStalePref.setDefaultValue(
+                String.valueOf(ShipMarkerManager.DEFAULT_RTL_STALE_EVICT_MS / 60000));
+        rtlShipStalePref.setOnPreferenceChangeListener((pref, newVal) -> {
+            setStaleSummary((EditTextPreference) pref, (String) newVal, "min");
+            return true;
+        });
+        screen.addPreference(rtlShipStalePref);
 
         // ── ICAO Database / Military Affiliation ─────────────────────────
         icaoUpdatePref = new Preference(getActivity());
@@ -250,11 +249,11 @@ public class AirSeaPreferenceFragment extends PluginPreferenceFragment {
         // Set initial summaries now that preferences are bound to SharedPreferences
         setListSummary(affilPref, affilPref.getValue(), affilLabels, affilValues);
         setListSummary(airGainPref, airGainPref.getValue(), airGainLabels, gainValues);
-        setListSummary(seaGainPref, seaGainPref.getValue(), seaGainLabels, gainValues);
         setRangeSummary(rangePref, rangePref.getText());
         setPpmSummary(ppmPref, ppmPref.getText());
-        setStaleSummary(airStalePref, airStalePref.getText(), "s");
-        setStaleSummary(shipStalePref, shipStalePref.getText(), "s");
+        setStaleSummary(airStalePref, airStalePref.getText(), "sec");
+        setStaleSummary(shipStalePref, shipStalePref.getText(), "sec");
+        setStaleSummary(rtlShipStalePref, rtlShipStalePref.getText(), "min");
         updateIcaoDeleteSummary(icaoDeletePref, icaoDatabase);
     }
 

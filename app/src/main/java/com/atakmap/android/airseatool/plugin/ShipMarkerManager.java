@@ -5,6 +5,9 @@
 
 package com.atakmap.android.airseatool.plugin;
 
+import android.os.Handler;
+import android.os.Looper;
+
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapGroup;
 import com.atakmap.android.maps.MapView;
@@ -43,7 +46,20 @@ public class ShipMarkerManager {
     private static final String COT_TYPE_COMBATANT    = "a-n-S-C";     // combatant
     private static final String GROUP_NAME = "AIS Ships";
     public  static final long DEFAULT_staleOffsetMs = 5 * 60 * 1000L;
+    public  static final long DEFAULT_RTL_STALE_EVICT_MS = 60 * 60 * 1000L;
     private volatile long staleOffsetMs = DEFAULT_staleOffsetMs;
+    private volatile long rtlStaleEvictMs = DEFAULT_RTL_STALE_EVICT_MS;
+    private volatile boolean rtlSourceActive = false;
+    private long nextEvictMs = 0;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable evictRunnable = new Runnable() {
+        @Override
+        public void run() {
+            evictStale(System.currentTimeMillis(),
+                    rtlSourceActive ? rtlStaleEvictMs : staleOffsetMs);
+            if (rtlSourceActive) mainHandler.postDelayed(this, 60_000L);
+        }
+    };
 
     private volatile char affiliation = 'n';
 
@@ -69,6 +85,18 @@ public class ShipMarkerManager {
 
     public void setStaleOffsetSeconds(int seconds) {
         this.staleOffsetMs = seconds * 1000L;
+    }
+
+    public void setRtlStaleEvictMinutes(int minutes) {
+        if (minutes <= 0) minutes = (int) (DEFAULT_RTL_STALE_EVICT_MS / 60000);
+        this.rtlStaleEvictMs = minutes * 60_000L;
+    }
+
+    public void setRtlSourceActive(boolean active) {
+        this.rtlSourceActive = active;
+        this.nextEvictMs = 0;
+        mainHandler.removeCallbacks(evictRunnable);
+        if (active) mainHandler.postDelayed(evictRunnable, 60_000L);
     }
 
     public void setAffiliation(char affiliation) {
@@ -163,7 +191,22 @@ public class ShipMarkerManager {
             double cog, double sog, int rot, int trueHeading,
             int navStatus, int shipType, double draught,
             String destination, String eta, int imoNumber) {
+        if (Double.isNaN(lat) || Double.isNaN(lon)
+                || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+            Log.d(TAG, "Reject ship invalid coords mmsi=" + mmsi
+                    + " lat=" + lat + " lon=" + lon);
+            return;
+        }
+
         long now = System.currentTimeMillis();
+
+        // Evict stale local markers periodically. RTL-SDR AIS has its own
+        // longer timeout because local reception can naturally go quiet.
+        if (now >= nextEvictMs) {
+            nextEvictMs = now + 60_000L;
+            evictStale(now, rtlSourceActive ? rtlStaleEvictMs : staleOffsetMs);
+        }
+
         Long lastUpdate = lastUpdateTimes.get(mmsi);
         if (lastUpdate != null && (now - lastUpdate) < updateFrequencyMs) {
             // Allow through if ship type changed (static data arrived)
@@ -482,6 +525,26 @@ public class ShipMarkerManager {
         userTypeOverrides.remove(uid);
     }
 
+    private void evictStale(long now, long timeoutMs) {
+        Iterator<Map.Entry<Integer, Long>> it = lastUpdateTimes.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, Long> entry = it.next();
+            if (now - entry.getValue() <= timeoutMs) continue;
+
+            int mmsi = entry.getKey();
+            String uid = UID_PREFIX + mmsi;
+            Marker m = markers.remove(uid);
+            if (m != null) {
+                MapGroup parent = m.getGroup();
+                if (parent != null) parent.removeItem(m);
+            }
+            lastShipTypes.remove(mmsi);
+            lastSetTypes.remove(uid);
+            userTypeOverrides.remove(uid);
+            it.remove();
+        }
+    }
+
     public void removeAllMarkers() {
         // Remove each marker individually — user-retyped markers may have
         // been moved to a different MapGroup by ATAK
@@ -499,5 +562,7 @@ public class ShipMarkerManager {
         lastSetTypes.clear();
         userTypeOverrides.clear();
         aisGroup = null;
+        nextEvictMs = 0;
+        mainHandler.removeCallbacks(evictRunnable);
     }
 }

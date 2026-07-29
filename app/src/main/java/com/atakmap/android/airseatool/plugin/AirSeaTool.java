@@ -57,11 +57,11 @@ public class AirSeaTool implements IPlugin,
     // Global tool preferences (stored in ATAK's default shared prefs; read by AirSeaPreferenceFragment)
     static final String PREF_AFFILIATION      = "airsea_affiliation";
     static final String PREF_RTL_GAIN_AIR     = "airsea_rtl_gain";
-    static final String PREF_RTL_GAIN_SEA     = "airsea_rtl_gain_sea";
     static final String PREF_RTL_RANGE_KM     = "airsea_rtl_range_km";
     static final String PREF_RTL_PPM          = "airsea_rtl_ppm";
     static final String PREF_AIR_STALE_SEC    = "airsea_air_stale_sec";
     static final String PREF_SHIP_STALE_SEC   = "airsea_ship_stale_sec";
+    static final String PREF_RTL_SHIP_STALE_MIN = "airsea_rtl_ship_stale_min";
 
     // Maritime prefs
     private static final String PREF_MARITIME_ENABLED  = "maritime_enabled";
@@ -133,10 +133,9 @@ public class AirSeaTool implements IPlugin,
     private boolean syncing = false;
 
     // Global preferences (applied from Specific Tool Preferences)
-    static final int DEFAULT_RTL_SEA_GAIN_TENTHS_DB = 280;
+    private static final int DEFAULT_RTL_SEA_GAIN_TENTHS_DB = 280;
 
     private int    rtlAirGainTenthsDb = RtlTcpClient.DEFAULT_GAIN_TENTHS_DB;
-    private int    rtlSeaGainTenthsDb = DEFAULT_RTL_SEA_GAIN_TENTHS_DB;
     private int    rtlPpmOffset    = 0;
     private double rtlRangeM       = 150_000.0;
 
@@ -144,11 +143,11 @@ public class AirSeaTool implements IPlugin,
             (sharedPreferences, key) -> {
                 if (PREF_AFFILIATION.equals(key)
                         || PREF_RTL_GAIN_AIR.equals(key)
-                        || PREF_RTL_GAIN_SEA.equals(key)
                         || PREF_RTL_RANGE_KM.equals(key)
                         || PREF_RTL_PPM.equals(key)
                         || PREF_AIR_STALE_SEC.equals(key)
-                        || PREF_SHIP_STALE_SEC.equals(key)) {
+                        || PREF_SHIP_STALE_SEC.equals(key)
+                        || PREF_RTL_SHIP_STALE_MIN.equals(key)) {
                     applyGlobalPreferences();
                 }
             };
@@ -253,7 +252,7 @@ public class AirSeaTool implements IPlugin,
         // Register in Specific Tool Preferences
         ToolsPreferenceFragment.register(new ToolsPreferenceFragment.ToolPreference(
                 "Air+Sea",
-                "Default track affiliation, RTL-SDR gain, range, and ICAO database",
+                "Default track affiliation, RTL-SDR gain, stale timeouts, and ICAO database",
                 "com.atakmap.android.airseatool",
                 pluginContext.getResources().getDrawable(R.drawable.ic_launcher),
                 new AirSeaPreferenceFragment(pluginContext, icaoDatabase)));
@@ -685,20 +684,13 @@ public class AirSeaTool implements IPlugin,
         shipMarkerManager.setAffiliation(affilChar);
         airMarkerManager.setAffiliation(affilChar);
 
-        // RTL-SDR gain
+        // RTL-SDR air gain. AIS uses tuner auto-gain, so no sea gain is exposed.
         String airGainStr = gp.getString(PREF_RTL_GAIN_AIR,
                 String.valueOf(RtlTcpClient.DEFAULT_GAIN_TENTHS_DB));
         try {
             rtlAirGainTenthsDb = Integer.parseInt(airGainStr);
         } catch (NumberFormatException e) {
             rtlAirGainTenthsDb = RtlTcpClient.DEFAULT_GAIN_TENTHS_DB;
-        }
-        String seaGainStr = gp.getString(PREF_RTL_GAIN_SEA,
-                String.valueOf(DEFAULT_RTL_SEA_GAIN_TENTHS_DB));
-        try {
-            rtlSeaGainTenthsDb = Integer.parseInt(seaGainStr);
-        } catch (NumberFormatException e) {
-            rtlSeaGainTenthsDb = DEFAULT_RTL_SEA_GAIN_TENTHS_DB;
         }
 
         // RTL-SDR PPM correction
@@ -744,6 +736,17 @@ public class AirSeaTool implements IPlugin,
         } catch (NumberFormatException e) {
             shipMarkerManager.setStaleOffsetSeconds(
                     (int) (ShipMarkerManager.DEFAULT_staleOffsetMs / 1000));
+        }
+
+        // RTL-SDR ship contact timeout eviction
+        String rtlShipStaleStr = gp.getString(PREF_RTL_SHIP_STALE_MIN,
+                String.valueOf(ShipMarkerManager.DEFAULT_RTL_STALE_EVICT_MS / 60000));
+        try {
+            shipMarkerManager.setRtlStaleEvictMinutes(
+                    Integer.parseInt(rtlShipStaleStr));
+        } catch (NumberFormatException e) {
+            shipMarkerManager.setRtlStaleEvictMinutes(
+                    (int) (ShipMarkerManager.DEFAULT_RTL_STALE_EVICT_MS / 60000));
         }
     }
 
@@ -885,6 +888,17 @@ public class AirSeaTool implements IPlugin,
         // Ports below 1024 are privileged on Android — the Driver can't bind them.
         if (port < 1024) port = RtlTcpClient.DEFAULT_PORT;
 
+        // If rtl_tcp is already listening, do not relaunch the Driver app.
+        // Relaunching while the USB device is in use can trigger LIBUSB_ERROR_BUSY
+        // and tear down the running service.
+        if (isRtlTcpListening(RTL_TCP_HOST, port)) {
+            if (rtlTcpPortInput != null) rtlTcpPortInput.setText(String.valueOf(port));
+            savePreferences();
+            showToast("RTL-SDR Driver already running on port " + port);
+            Log.d(TAG, "RTL-SDR Driver already listening on port " + port + ", skipping launch");
+            return;
+        }
+
         // Build the iqsrc:// URI.  The Driver parses -a, -p, -s, -f from it.
         // Address MUST be 0.0.0.0 (all interfaces); 127.0.0.1 causes bind failure.
         // Frequency and sample rate: best guess for currently selected source.
@@ -917,6 +931,21 @@ public class AirSeaTool implements IPlugin,
             Log.w(TAG, "Exception launching Driver (" + e.getClass().getSimpleName()
                     + "): " + e.getMessage());
             showToast("Cannot open RTL-SDR Driver: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private static boolean isRtlTcpListening(String host, int port) {
+        java.net.Socket s = null;
+        try {
+            s = new java.net.Socket();
+            s.connect(new java.net.InetSocketAddress(host, port), 250);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (s != null) {
+                try { s.close(); } catch (Exception ignored) {}
+            }
         }
     }
 
@@ -1013,22 +1042,28 @@ public class AirSeaTool implements IPlugin,
 
         if (sourceIdx == 0) {
             // USB: RTL-SDR AIS
+            shipMarkerManager.setRtlSourceActive(true);
             lastApiKey = null; // prevent aisstream.io auto-reconnect from firing
+
+            // AIS was validated with near-zero PPM. Stale auto-PPM values from
+            // prior failed acquisition can shift VHF AIS by several kHz and
+            // dramatically reduce static/name decodes. ADS-B still uses the
+            // persisted RTL PPM path unchanged.
+            final int aisPpmOffset = Math.abs(rtlPpmOffset) <= 10 ? rtlPpmOffset : 0;
+            if (aisPpmOffset != rtlPpmOffset) {
+                Log.w(TAG, "Ignoring RTL PPM " + rtlPpmOffset
+                        + " for AIS; using 0 ppm for maritime RTL-SDR");
+            }
+
             rtlAisClient = new RtlSdrAisClient(this, RTL_TCP_HOST, getRtlTcpPort(),
-                    rtlSeaGainTenthsDb, rtlPpmOffset,
-                    ppm -> mainHandler.post(() -> {
-                        int totalPpm = rtlPpmOffset + ppm;
-                        SharedPreferences gp = PreferenceManager.getDefaultSharedPreferences(
-                                MapView.getMapView().getContext());
-                        gp.edit().putString(PREF_RTL_PPM, String.valueOf(totalPpm)).apply();
-                        rtlPpmOffset = totalPpm;
-                        String sign = totalPpm >= 0 ? "+" : "";
-                        updateStatus("Maritime: AIS locked — auto-PPM " + sign + totalPpm + " ppm");
-                    }));
+                    DEFAULT_RTL_SEA_GAIN_TENTHS_DB, aisPpmOffset,
+                    ppm -> mainHandler.post(() -> updateStatus("Maritime: AIS locked")),
+                    status -> updateStatus("Maritime: " + status));
             rtlAisClient.connect();
             updateStatus("Maritime: Connecting to RTL-SDR Driver...");
         } else if (sourceIdx == 2) {
             // VesselFinder
+            shipMarkerManager.setRtlSourceActive(false);
             if (vesselFinderApiKey == null || vesselFinderApiKey.isEmpty()) {
                 updateStatus("Maritime: API Key required.");
                 return;
@@ -1074,6 +1109,7 @@ public class AirSeaTool implements IPlugin,
             updateStatus("Maritime: Connecting...");
         } else {
             // aisstream.io (sourceIdx == 1)
+            shipMarkerManager.setRtlSourceActive(false);
             if (apiKey == null || apiKey.isEmpty()) {
                 updateStatus("Maritime: API Key required.");
                 return;
@@ -1103,6 +1139,7 @@ public class AirSeaTool implements IPlugin,
             vesselFinderClient = null;
         }
         shipMarkerManager.removeAllMarkers();
+        shipMarkerManager.setRtlSourceActive(false);
         updateStatus(null);
     }
 
@@ -1119,11 +1156,7 @@ public class AirSeaTool implements IPlugin,
             rtlAdsbClient = new RtlSdrAdsbClient(this, RTL_TCP_HOST, getRtlTcpPort(),
                     rtlAirGainTenthsDb, rtlPpmOffset,
                     ppm -> mainHandler.post(() -> {
-                        int totalPpm = rtlPpmOffset + ppm;
-                        SharedPreferences gp = PreferenceManager.getDefaultSharedPreferences(
-                                MapView.getMapView().getContext());
-                        gp.edit().putString(PREF_RTL_PPM, String.valueOf(totalPpm)).apply();
-                        rtlPpmOffset = totalPpm;
+                        int totalPpm = applyRtlPpmDelta(ppm, "ADS-B");
                         String sign = totalPpm >= 0 ? "+" : "";
                         updateAirStatus("Air: ADS-B locked — auto-PPM " + sign + totalPpm + " ppm");
                     }));
@@ -1170,6 +1203,23 @@ public class AirSeaTool implements IPlugin,
         }
         airMarkerManager.removeAllMarkers();
         updateAirStatus(null);
+    }
+
+    private int applyRtlPpmDelta(int deltaPpm, String source) {
+        int merged = rtlPpmOffset + deltaPpm;
+        if (merged > 200) merged = 200;
+        if (merged < -200) merged = -200;
+        rtlPpmOffset = merged;
+
+        MapView mv = MapView.getMapView();
+        if (mv != null) {
+            SharedPreferences gp = PreferenceManager.getDefaultSharedPreferences(mv.getContext());
+            gp.edit().putString(PREF_RTL_PPM, String.valueOf(merged)).apply();
+        }
+
+        Log.d(TAG, source + " PPM update: delta=" + (deltaPpm >= 0 ? "+" : "") + deltaPpm
+                + " => total=" + (merged >= 0 ? "+" : "") + merged);
+        return merged;
     }
 
     private AdsbSource createAirSource(int spinnerIndex) {

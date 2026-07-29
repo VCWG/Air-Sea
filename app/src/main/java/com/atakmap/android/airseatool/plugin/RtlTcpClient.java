@@ -44,6 +44,8 @@ public class RtlTcpClient {
     public  static final int DEFAULT_GAIN_TENTHS_DB = 402;
     private final        int gainTenthsDb;
     private final        int ppmOffset; // crystal correction: positive = crystal runs fast
+    private final        boolean tunerAutoGain;
+    private final        boolean rtlAgcEnabled;
 
     /** IQ sample callback; called on the streaming thread. */
     @FunctionalInterface
@@ -51,27 +53,34 @@ public class RtlTcpClient {
         void onSamples(byte[] buf, int len);
     }
 
-    public RtlTcpClient(String host, int port, int gainTenthsDb, int ppmOffset) {
+    public RtlTcpClient(String host, int port, int gainTenthsDb, int ppmOffset,
+            boolean tunerAutoGain, boolean rtlAgcEnabled) {
         this.host          = host;
         this.port          = port;
         this.gainTenthsDb  = gainTenthsDb;
         this.ppmOffset     = ppmOffset;
+        this.tunerAutoGain = tunerAutoGain;
+        this.rtlAgcEnabled = rtlAgcEnabled;
+    }
+
+    public RtlTcpClient(String host, int port, int gainTenthsDb, int ppmOffset) {
+        this(host, port, gainTenthsDb, ppmOffset, false, false);
     }
 
     public RtlTcpClient(String host, int port, int gainTenthsDb) {
-        this(host, port, gainTenthsDb, 0);
+        this(host, port, gainTenthsDb, 0, false, false);
     }
 
     public RtlTcpClient(String host, int port) {
-        this(host, port, DEFAULT_GAIN_TENTHS_DB, 0);
+        this(host, port, DEFAULT_GAIN_TENTHS_DB, 0, false, false);
     }
 
     public RtlTcpClient(int port) {
-        this("127.0.0.1", port, DEFAULT_GAIN_TENTHS_DB, 0);
+        this("127.0.0.1", port, DEFAULT_GAIN_TENTHS_DB, 0, false, false);
     }
 
     public RtlTcpClient() {
-        this("127.0.0.1", DEFAULT_PORT, DEFAULT_GAIN_TENTHS_DB, 0);
+        this("127.0.0.1", DEFAULT_PORT, DEFAULT_GAIN_TENTHS_DB, 0, false, false);
     }
 
     private Socket          socket;
@@ -109,14 +118,17 @@ public class RtlTcpClient {
         // Configure the device
         sendCmd(CMD_SET_SAMPLE_RATE, sampleRateHz);
         sendCmd(CMD_SET_FREQ,        (int) correctedFreq);
-        sendCmd(CMD_SET_GAIN_MODE,   1);              // manual gain
-        sendCmd(CMD_SET_GAIN,        gainTenthsDb);
-        sendCmd(CMD_SET_AGC_MODE,    0);              // RTL AGC off
+        sendCmd(CMD_SET_GAIN_MODE,   tunerAutoGain ? 0 : 1);
+        if (!tunerAutoGain) {
+            sendCmd(CMD_SET_GAIN, gainTenthsDb);
+        }
+        sendCmd(CMD_SET_AGC_MODE,    rtlAgcEnabled ? 1 : 0);
 
         Log.d(TAG, "rtl_tcp configured: freq=" + freqHz
                 + (ppmOffset != 0 ? " (corrected→" + correctedFreq + " ppm=" + ppmOffset + ")" : "")
                 + " rate=" + sampleRateHz
-                + " gain=" + (gainTenthsDb / 10.0) + " dB (manual)");
+                + " gain=" + (tunerAutoGain ? "AUTO" : ((gainTenthsDb / 10.0) + " dB"))
+                + " agc=" + (rtlAgcEnabled ? "on" : "off"));
     }
 
     /**
@@ -129,11 +141,41 @@ public class RtlTcpClient {
         // during brief RTL-SDR Driver pauses (dongle power management, etc.)
         socket.setSoTimeout(30_000);
         byte[] buf = new byte[65536];
+        byte[] aligned = new byte[65537];
+        int pendingByte = -1;
         while (running) {
             int n = in.read(buf, 0, buf.length);
             if (n < 0) throw new IOException("rtl_tcp server closed the stream");
-            if (n > 0) cb.onSamples(buf, n);
+            if (n <= 0) continue;
+
+            byte[] out = buf;
+            int outLen = n;
+
+            // Preserve I/Q byte alignment across arbitrary TCP read boundaries.
+            // rtl_tcp is a raw byte stream, so a read can end on an odd byte count.
+            if (pendingByte >= 0) {
+                aligned[0] = (byte) pendingByte;
+                System.arraycopy(buf, 0, aligned, 1, n);
+                out = aligned;
+                outLen = n + 1;
+                pendingByte = -1;
+            }
+
+            if ((outLen & 1) != 0) {
+                pendingByte = out[outLen - 1] & 0xff;
+                outLen--;
+            }
+
+            if (outLen > 0) cb.onSamples(out, outLen);
         }
+    }
+
+    /** Retune center frequency using the current rtl_tcp connection. */
+    public void retuneFrequency(long freqHz, int ppm) throws IOException {
+        long correctedFreq = freqHz - Math.round(freqHz * ppm / 1e6);
+        sendCmd(CMD_SET_FREQ, (int) correctedFreq);
+        Log.d(TAG, "rtl_tcp retune: freq=" + freqHz
+                + " corrected→" + correctedFreq + " ppm=" + ppm);
     }
 
     /** Close the connection; causes any blocking {@link #stream} call to return. */
@@ -144,7 +186,7 @@ public class RtlTcpClient {
 
     // ─── Helpers ───────────────────────────────────────────────────────────
 
-    private void sendCmd(int cmd, int param) throws IOException {
+    private synchronized void sendCmd(int cmd, int param) throws IOException {
         byte[] b = {
             (byte) cmd,
             (byte) (param >> 24),

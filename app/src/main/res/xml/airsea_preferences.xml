@@ -22,17 +22,9 @@
         android:entryValues="@array/rtl_gain_values"
         android:defaultValue="402" />
 
-    <ListPreference
-        android:key="airsea_rtl_gain_sea"
-        android:title="RTL-SDR Gain (Sea)"
-        android:summary="%s"
-        android:entries="@array/rtl_gain_sea_labels"
-        android:entryValues="@array/rtl_gain_values"
-        android:defaultValue="280" />
-
     <EditTextPreference
         android:key="airsea_rtl_range_km"
-        android:title="RTL-SDR Range Limit"
+        android:title="RTL-SDR Range Limit (Air)"
         android:defaultValue="150" />
 
 </PreferenceScreen>
